@@ -33,7 +33,8 @@ final class VersionControlSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
-            if case .loaded = phase { refreshError = error.localizedDescription }
+            guard !APIError.isCancellation(error) else { return }
+            if case .loaded = phase { refreshError = APIError.userMessage(error) }
             else { phase = .failed(error.localizedDescription) }
         }
     }
@@ -57,7 +58,7 @@ final class VersionControlSettingsModel {
             git = try await client.detectGit()   // re-detect with the new path
             toast = "Git path saved."
         } catch {
-            toast = "Couldn’t save: \(error.localizedDescription)"
+            if let message = APIError.userMessage(error) { toast = "Couldn’t save: \(message)" }
         }
     }
 
@@ -89,7 +90,7 @@ final class VersionControlSettingsModel {
             try await client.updateGithubAccounts(list)
             await load()
         } catch {
-            toast = "Couldn’t set default: \(error.localizedDescription)"
+            if let message = APIError.userMessage(error) { toast = "Couldn’t set default: \(message)" }
         }
     }
 
@@ -101,7 +102,7 @@ final class VersionControlSettingsModel {
         do {
             try await client.deleteAccountToken(accountId: account.id)
         } catch {
-            toast = "Couldn’t remove token: \(error.localizedDescription)"
+            if let message = APIError.userMessage(error) { toast = "Couldn’t remove token: \(message)" }
             return
         }
         let previous = accounts
@@ -111,7 +112,7 @@ final class VersionControlSettingsModel {
             toast = "Removed \(account.username)."
         } catch {
             accounts = previous
-            toast = "Couldn’t delete: \(error.localizedDescription)"
+            if let message = APIError.userMessage(error) { toast = "Couldn’t delete: \(message)" }
         }
     }
 }

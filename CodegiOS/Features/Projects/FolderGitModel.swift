@@ -168,7 +168,7 @@ final class FolderGitModel {
                 banner = result
             }
             didMutate()
-        } catch is CancellationError {
+        } catch where APIError.isCancellation(error) {
             // View went away — leave state untouched.
         } catch let error as APIError where error.isAuthFailure {
             // The user cancelled the credential prompt (withCredentialRetry only

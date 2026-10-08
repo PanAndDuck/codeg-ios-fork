@@ -25,8 +25,9 @@ final class McpSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             if servers.isEmpty { phase = .failed(error.localizedDescription) }
-            else { refreshError = error.localizedDescription }
+            else { refreshError = APIError.userMessage(error) }
         }
     }
 
@@ -44,7 +45,7 @@ final class McpSettingsModel {
             try await client.mcpRemoveServer(serverId: server.id)
         } catch {
             servers = previous
-            refreshError = error.localizedDescription
+            refreshError = APIError.userMessage(error)
         }
     }
 }

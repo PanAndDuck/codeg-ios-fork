@@ -319,7 +319,7 @@ struct CursorConfigSection: View {
             models = result.models
             modelsError = result.error
         } catch {
-            modelsError = error.localizedDescription
+            modelsError = APIError.userMessage(error)
         }
         modelsLoaded = true
     }

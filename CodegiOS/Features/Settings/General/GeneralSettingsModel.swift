@@ -42,6 +42,7 @@ final class GeneralSettingsModel {
             questionEnabled = (try? await client.questionEnabled()) ?? questionEnabled
             phase = .loaded
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -68,7 +69,7 @@ final class GeneralSettingsModel {
                 try await client.setDelegationSettingsRaw(settings)
                 delegationRaw = settings
             } catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 await load()
                 return
             }
@@ -98,7 +99,7 @@ final class GeneralSettingsModel {
             feedbackPending = nil
             do { try await client.setFeedbackEnabled(target) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 feedbackEnabled = (try? await client.feedbackEnabled()) ?? feedbackEnabled
                 return
             }
@@ -122,7 +123,7 @@ final class GeneralSettingsModel {
             questionPending = nil
             do { try await client.setQuestionEnabled(target) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 questionEnabled = (try? await client.questionEnabled()) ?? questionEnabled
                 return
             }

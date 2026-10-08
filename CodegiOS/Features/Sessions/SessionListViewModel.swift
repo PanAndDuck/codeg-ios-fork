@@ -172,7 +172,7 @@ final class SessionListViewModel {
             if let i = conversations.firstIndex(where: { $0.id == conversation.id }) {
                 conversations[i].pinnedAt = previous
             }
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
     }
 

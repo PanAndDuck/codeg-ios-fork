@@ -100,6 +100,7 @@ struct WeixinQRView: View {
         let qr: WeixinQrcode
         do { qr = try await client.weixinGetQrcode() }
         catch {
+            guard !APIError.isCancellation(error) else { return }
             phase = .failed(error.localizedDescription)
             statusText = "Couldn’t load the QR code."
             return

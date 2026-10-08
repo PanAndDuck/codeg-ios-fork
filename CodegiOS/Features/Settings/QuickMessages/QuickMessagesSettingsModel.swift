@@ -26,8 +26,9 @@ final class QuickMessagesSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             if items.isEmpty { phase = .failed(error.localizedDescription) }
-            else { refreshError = error.localizedDescription }
+            else { refreshError = APIError.userMessage(error) }
         }
     }
 
@@ -52,7 +53,7 @@ final class QuickMessagesSettingsModel {
             for target in targets { try await client.quickMessageDelete(id: target.id) }
         } catch {
             items = previous
-            refreshError = error.localizedDescription
+            refreshError = APIError.userMessage(error)
         }
     }
 
@@ -79,7 +80,7 @@ final class QuickMessagesSettingsModel {
             do {
                 try await client.quickMessagesReorder(ids: ids)
             } catch {
-                refreshError = error.localizedDescription
+                refreshError = APIError.userMessage(error)
                 await load()
                 return
             }

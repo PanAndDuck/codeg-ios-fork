@@ -41,6 +41,7 @@ final class SkillsSettingsModel {
             }
             if let agent = selectedAgent { await loadSkills(agent) }
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -67,7 +68,7 @@ final class SkillsSettingsModel {
             refreshError = nil
         } catch {
             guard token == loadToken else { return }
-            refreshError = error.localizedDescription
+            refreshError = APIError.userMessage(error)
         }
     }
 
@@ -108,7 +109,7 @@ final class SkillsSettingsModel {
             if agent == selectedAgent { await loadSkills(agent) }
         } catch {
             // Don't surface A's failure on B's view if the user switched mid-delete.
-            if agent == selectedAgent { refreshError = error.localizedDescription }
+            if agent == selectedAgent { refreshError = APIError.userMessage(error) }
         }
     }
 }

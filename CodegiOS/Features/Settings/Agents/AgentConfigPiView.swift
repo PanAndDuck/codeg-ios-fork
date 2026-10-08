@@ -411,7 +411,7 @@ struct PiConfigSection: View {
             do {
                 try await model.update(agent, enabled: agent.enabled, env: env, modelProviderId: agent.modelProviderId)
                 banner = Banner(text: "Pi runtime saved", isError: false)
-            } catch { banner = Banner(text: error.localizedDescription, isError: true) }
+            } catch { banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) } }
             savingRuntime = false
         }
     }
@@ -446,7 +446,7 @@ struct PiConfigSection: View {
                     customProviders.sort { $0.id < $1.id }
                 }
                 banner = Banner(text: "Pi config saved", isError: false)
-            } catch { banner = Banner(text: error.localizedDescription, isError: true) }
+            } catch { banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) } }
             savingCreds = false
         }
     }
@@ -457,7 +457,7 @@ struct PiConfigSection: View {
             do {
                 try await client?.installPiBinary(taskId: UUID().uuidString)
                 banner = Banner(text: "pi installed", isError: false)
-            } catch { banner = Banner(text: "Failed to install pi", isError: true) }
+            } catch { banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) } }
             piOp = nil
             await detectPiBinary()
         }
@@ -469,7 +469,7 @@ struct PiConfigSection: View {
             do {
                 try await client?.uninstallPiBinary(taskId: UUID().uuidString)
                 banner = Banner(text: "pi uninstalled", isError: false)
-            } catch { banner = Banner(text: "Failed to uninstall pi", isError: true) }
+            } catch { banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) } }
             piOp = nil
             await detectPiBinary()
         }
@@ -487,7 +487,7 @@ struct PiConfigSection: View {
                 try await model.update(agent, enabled: agent.enabled, env: env, modelProviderId: agent.modelProviderId)
             } catch {
                 trustWorkspace = !next
-                banner = Banner(text: "Failed to save workspace trust", isError: true)
+                banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) }
             }
             savingTrust = false
         }

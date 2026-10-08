@@ -141,7 +141,7 @@ struct McpServerEditorSheet: View {
                 try await onSave(id, spec, apps)
                 dismiss()
             } catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 isSaving = false
             }
         }

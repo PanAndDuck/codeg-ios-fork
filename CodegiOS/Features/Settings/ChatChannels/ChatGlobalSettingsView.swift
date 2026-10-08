@@ -201,6 +201,7 @@ final class ChatGlobalSettingsModel {
             webhooks = try await client.chatEventWebhooks().map { WebhookItem(url: $0.url, enabled: $0.enabled) }
             phase = .loaded
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -260,7 +261,7 @@ final class ChatGlobalSettingsModel {
             let value = prefix
             do { try await client.setChatCommandPrefix(value) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 prefix = (try? await client.chatCommandPrefix()) ?? prefix
                 return
             }
@@ -282,7 +283,7 @@ final class ChatGlobalSettingsModel {
             let value = language
             do { try await client.setChatMessageLanguage(value) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 language = (try? await client.chatMessageLanguage()) ?? language
                 return
             }
@@ -306,7 +307,7 @@ final class ChatGlobalSettingsModel {
             let value: [String]? = (enabledEvents == ChatEventCatalog.defaultEnabled) ? nil : Array(enabledEvents)
             do { try await client.setChatEventFilter(value) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 // Reconcile to server truth. Use do/catch (not try?) so a server
                 // `null` (= default set) is distinguished from a failed re-read
                 // (`try?` would flatten both to nil and keep the optimistic value).
@@ -339,7 +340,7 @@ final class ChatGlobalSettingsModel {
                 .filter { !$0.url.isEmpty }
             do { try await client.setChatEventWebhooks(value) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 if let fresh = try? await client.chatEventWebhooks() {
                     webhooks = fresh.map { WebhookItem(url: $0.url, enabled: $0.enabled) }
                 }

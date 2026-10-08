@@ -90,7 +90,7 @@ struct QuickMessageEditorSheet: View {
                 try await onSave(snapshotTitle, snapshotContent)
                 dismiss()
             } catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 isSaving = false
             }
         }

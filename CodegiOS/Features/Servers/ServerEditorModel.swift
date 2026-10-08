@@ -202,7 +202,8 @@ final class ServerEditorModel {
             let health = try await client.health()
             result = .success(version: health.version)
         } catch {
-            result = .failure(message: error.localizedDescription)
+            guard let message = APIError.userMessage(error) else { return }
+            result = .failure(message: message)
         }
 
         // Only surface the result if the fields it was computed from still hold;

@@ -129,7 +129,7 @@ struct FolderFilesView: View {
             items = try await client.listDirectoryWithFiles(path: dirPath)
             loaded = true
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
         isLoading = false
     }
@@ -280,7 +280,7 @@ struct FilePreviewView: View {
         do {
             content = try await client.readFilePreview(rootPath: rootPath, path: relative).content
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
         isLoading = false
     }

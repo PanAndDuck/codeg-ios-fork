@@ -91,7 +91,7 @@ final class ServerStatusModel {
     private func probe(_ servers: [ServerProfile], tokens: [UUID: Int]) async {
         guard !servers.isEmpty else { return }
 
-        await withTaskGroup(of: (UUID, ServerStatus).self) { group in
+        await withTaskGroup(of: (UUID, ServerStatus?).self) { group in
             for server in servers {
                 let client = store.client(for: server)
                 group.addTask {
@@ -105,6 +105,7 @@ final class ServerStatusModel {
             // in `.checking`. Apply only if it's still the latest probe for that
             // server (a newer refresh supersedes a slower older one).
             for await (id, status) in group where tokens[id] == generations[id] {
+                guard let status else { continue }
                 statuses[id] = status
             }
         }
@@ -112,7 +113,7 @@ final class ServerStatusModel {
 
     /// Probe one client off the main actor. A missing client means the profile
     /// has no URL/token, which we report as offline.
-    private nonisolated static func probeOne(_ client: CodegClient?) async -> ServerStatus {
+    private nonisolated static func probeOne(_ client: CodegClient?) async -> ServerStatus? {
         guard let client else {
             return .offline(reason: "Missing URL or token")
         }
@@ -120,7 +121,7 @@ final class ServerStatusModel {
             let health = try await client.health()
             return .online(version: health.version)
         } catch {
-            return .offline(reason: error.localizedDescription)
+            return APIError.userMessage(error).map { .offline(reason: $0) }
         }
     }
 }
