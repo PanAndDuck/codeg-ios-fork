@@ -181,13 +181,36 @@ struct SessionStats: Codable, Hashable, Sendable {
     let contextWindowUsagePercent: Double?
 }
 
-/// Full session detail incl. message history (Rust `DbConversationDetail`).
+/// Session detail with optional windowed history (Rust `DbConversationDetail`).
 /// Decode-only: `MessageTurn`/`ContentBlock` are response shapes we never encode.
 struct ConversationDetail: Decodable, Sendable {
     let summary: ConversationSummary
-    let turns: [MessageTurn]
+    var turns: [MessageTurn]
     let sessionStats: SessionStats?
     let inFlightUserTurnId: String?
+    var turnsOffset: Int? = nil
+    var turnsTotal: Int? = nil
+    var assistantTurnsBeforeOffset: Int? = nil
+    var prefixHash: String? = nil
+    var uncoveredPrefixMaxTs: Date? = nil
+    var transcriptWatermark: UInt64? = nil
+
+    /// Old servers omit the metadata and return the entire transcript.
+    var isWindowed: Bool { turnsOffset != nil && turnsTotal != nil && prefixHash != nil }
+    var loadedTurnsOffset: Int { isWindowed ? max(0, turnsOffset ?? 0) : 0 }
+    var totalTurns: Int { isWindowed ? (turnsTotal ?? turns.count) : turns.count }
+    var hasEarlierTurns: Bool { loadedTurnsOffset > 0 }
+}
+
+/// The older-page endpoint returns no summary/stats and includes a seam proof.
+struct ConversationTurnsPage: Decodable, Sendable {
+    let turns: [MessageTurn]
+    let turnsOffset: Int
+    let turnsTotal: Int
+    let assistantTurnsBeforeOffset: Int
+    let prefixHash: String
+    let prefixHashBeforeIndex: String
+    let uncoveredPrefixMaxTs: Date?
 }
 
 /// Returned by `acp_find_connection_for_conversation` when a live ACP

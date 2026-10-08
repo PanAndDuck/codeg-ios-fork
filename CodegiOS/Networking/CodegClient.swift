@@ -64,9 +64,15 @@ struct CodegClient: Sendable {
         ), session: readSession)
     }
 
-    /// Full session detail incl. message history.
-    func conversationDetail(id: Int) async throws -> ConversationDetail {
-        try await postJSON("get_folder_conversation", ConversationIdBody(conversationId: id))
+    /// Default to a small tail even for identity-only reads during a send.
+    func conversationDetail(id: Int, window: ConversationTurnWindow = .tail(60)) async throws -> ConversationDetail {
+        try await postJSON("get_folder_conversation", ConversationDetailBody(conversationId: id, window: window))
+    }
+
+    func conversationTurns(id: Int, beforeIndex: Int, limit: Int = 60) async throws -> ConversationTurnsPage {
+        try await postJSON("get_folder_conversation_turns", ConversationTurnsBody(
+            conversationId: id, beforeIndex: beforeIndex, limit: limit
+        ))
     }
 
     /// Create a conversation row up front (before the first prompt) and return its

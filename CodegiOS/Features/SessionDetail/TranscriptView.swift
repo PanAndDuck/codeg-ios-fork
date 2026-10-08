@@ -23,6 +23,16 @@ extension EnvironmentValues {
 
 // MARK: - Transcript
 
+/// One reveal can exhaust the small local render tail and need a server page in
+/// the same action; waiting for another near-top transition can strand paging.
+enum TranscriptPaging {
+    static func earlierPage(turns: [MessageTurn], renderedStart: Int, hasEarlier: Bool) -> (start: Int, fetchFromServer: Bool) {
+        var start = min(max(0, renderedStart - 150), max(0, turns.count - 1))
+        while start > 0, turns[start].role == .assistant { start -= 1 }
+        return (start, start == 0 && hasEarlier)
+    }
+}
+
 /// The scrollable transcript, rendered as a **vertical timeline**: a continuous
 /// rail runs top-to-bottom and every event — each user message, reasoning block,
 /// tool call, tool group, assistant text segment, and system note — is a node on
@@ -66,6 +76,11 @@ struct TranscriptView<Header: View>: View {
     /// it to show/hide the floating "jump to latest" button (which lives above the
     /// compose bar, not here, so it is reliably tappable).
     let onPinnedChange: (Bool) -> Void
+    var hasEarlierTurns: Bool = false
+    var isFetchingEarlier: Bool = false
+    var earlierTurnsError: String? = nil
+    var historyResetTick: Int = 0
+    var onLoadEarlier: () async -> Void = {}
     /// Scrolls with the content as the first element (header above the first
     /// node). Kept generic so the transcript stays agnostic of the header's type.
     @ViewBuilder var header: () -> Header
@@ -77,6 +92,21 @@ struct TranscriptView<Header: View>: View {
     /// open follows.
     @State private var stuckToBottom = true
     @State private var isUserScrolling = false
+    /// Geometry is bookkeeping, not render state: scrolling must not rebuild
+    /// the node list just to record the frames of realized cells.
+    private final class ViewportMemo {
+        var rowFrames: [String: CGRect] = [:]
+        var height: CGFloat = 0
+    }
+    @State private var viewport = ViewportMemo()
+    @State private var earlierAnchor: (id: String, anchor: UnitPoint)?
+
+    private struct RowFramesKey: PreferenceKey {
+        static var defaultValue: [String: CGRect] { [:] }
+        static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+            value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+        }
+    }
 
     /// Layout changes must not be mistaken for the user scrolling into history.
     private struct ScrollMetrics: Equatable {
@@ -84,11 +114,13 @@ struct TranscriptView<Header: View>: View {
         var contentHeight: CGFloat
         var containerHeight: CGFloat
         var bottomInset: CGFloat
+        var offsetY: CGFloat
 
         init(_ geometry: ScrollGeometry) {
             contentHeight = geometry.contentSize.height
             containerHeight = geometry.containerSize.height
             bottomInset = geometry.contentInsets.bottom
+            offsetY = geometry.contentOffset.y
             atBottom = contentHeight
                 - (geometry.contentOffset.y + containerHeight - bottomInset) <= 80
         }
@@ -103,17 +135,17 @@ struct TranscriptView<Header: View>: View {
     // So we only build + render a *window* of the most recent turns initially, and
     // load older ones when the user scrolls up. `build` + the `List` layout become
     // O(window) instead of O(history), so open time stops growing with length.
+    // Explicit paging expands that rendered history; the node memo and List's
+    // cell recycling avoid repeated work between history mutations.
     //
-    // `windowStartTurn` is the absolute index into `turns` where the window begins;
+    // `windowStartTurn` is the local index into `turns` where rendering begins;
     // `nil` means "not yet expanded" → the window is anchored to the tail and
-    // follows new turns. Persisted turns only grow at the end, so an absolute index
-    // stays valid as the conversation advances.
+    // follows new turns. A network prepend expands this to zero, and a server
+    // compaction resets it to nil.
 
     /// How many trailing turns to show on first open. Enough to fill the viewport
     /// with room to spare; small enough that layout is instant.
     private let initialTurnWindow = 50
-    /// How many older turns to reveal each time the user scrolls near the top.
-    private let pageTurns = 150
     /// Distance from the top (pt) at which to begin loading older turns — generous
     /// so history is ready before the user reaches the very top.
     private let loadEarlierThreshold: CGFloat = 600
@@ -163,7 +195,7 @@ struct TranscriptView<Header: View>: View {
 
     /// Whether the window reaches the true start of the conversation (everything
     /// loaded). Only then is the scrollaway `header` shown and the rail's top capped.
-    private var headLoaded: Bool { effectiveStart == 0 }
+    private var headLoaded: Bool { effectiveStart == 0 && !hasEarlierTurns }
 
     /// Walk back from `desired` to the nearest non-assistant (user/system) turn so
     /// the window never starts in the middle of a merged assistant reply.
@@ -214,24 +246,44 @@ struct TranscriptView<Header: View>: View {
         // conversation; otherwise the spine continues up into the not-yet-loaded
         // turns.
         if !all.isEmpty {
-            if start == 0 { all[0].connectTop = false }
+            if headLoaded { all[0].connectTop = false }
             all[all.count - 1].connectBottom = false
         }
         return all
     }
 
-    /// Reveal an older page of turns. Cheap (build + layout are O(window)); the
-    /// bottom scroll anchor keeps the user's current position from jumping as rows
-    /// are inserted above.
-    private func loadEarlier() {
+    /// Save an actually visible row and its viewport-relative position. Restoring
+    /// that stable id handles variable-height message rows without relying on an
+    /// estimated content-height delta from List's recycled cells.
+    private func loadEarlier(_ proxy: ScrollViewProxy) {
         let cur = effectiveStart
-        guard cur > 0, !isLoadingEarlier else { return }
+        guard !headLoaded, !isLoadingEarlier, !isFetchingEarlier else { return }
+        stuckToBottom = false
+        onPinnedChange(false)
+        if let row = viewport.rowFrames.filter({ $0.value.maxY > 0 && $0.value.minY < viewport.height })
+            .min(by: { abs($0.value.minY) < abs($1.value.minY) }) {
+            let available = viewport.height - row.value.height
+            earlierAnchor = (row.key, UnitPoint(x: 0.5, y: abs(available) > 1 ? row.value.minY / available : 0))
+        }
+        let page = TranscriptPaging.earlierPage(turns: turns, renderedStart: cur, hasEarlier: hasEarlierTurns)
         isLoadingEarlier = true
-        windowStartTurn = snappedStart(cur - pageTurns)
+        windowStartTurn = page.start
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
+            if page.fetchFromServer { await onLoadEarlier() }
+            // Let the new rows enter List's layout before restoring the anchor.
+            await Task.yield()
+            restoreEarlierAnchor(proxy)
+            try? await Task.sleep(for: .milliseconds(80))
+            restoreEarlierAnchor(proxy)
             isLoadingEarlier = false
         }
+    }
+
+    private func restoreEarlierAnchor(_ proxy: ScrollViewProxy) {
+        guard !stuckToBottom, let earlierAnchor else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo(earlierAnchor.id, anchor: earlierAnchor.anchor) }
     }
 
     var body: some View {
@@ -245,11 +297,20 @@ struct TranscriptView<Header: View>: View {
                 if headLoaded {
                     header()
                         .modifier(TimelineRowChrome(top: 12, leading: TimelineMetrics.rowTrailingInset))
-                } else if isLoadingEarlier {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                        .modifier(TimelineRowChrome(top: 14, leading: TimelineMetrics.rowTrailingInset))
+                } else {
+                    VStack(spacing: 8) {
+                        if isLoadingEarlier || isFetchingEarlier {
+                            ProgressView().controlSize(.small)
+                                .accessibilityLabel("Load earlier messages")
+                        } else {
+                            Button("Load earlier messages") { loadEarlier(proxy) }
+                        }
+                        if let earlierTurnsError {
+                            Text(earlierTurnsError).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .modifier(TimelineRowChrome(top: 14, leading: TimelineMetrics.rowTrailingInset))
                 }
 
                 ForEach(nodes) { node in
@@ -269,6 +330,12 @@ struct TranscriptView<Header: View>: View {
                     // on the transcript in `SessionDetailView`.
                     .transition(.opacity)
                     .id(node.id)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: RowFramesKey.self,
+                                value: [node.id: geometry.frame(in: .named("transcript-viewport"))])
+                        }
+                    }
                 }
 
                 // Zero-height anchor we scroll to (a little top inset keeps the
@@ -281,6 +348,8 @@ struct TranscriptView<Header: View>: View {
                     .id(bottomAnchor)
             }
             .listStyle(.plain)
+            .coordinateSpace(name: "transcript-viewport")
+            .onPreferenceChange(RowFramesKey.self) { viewport.rowFrames = $0 }
             .scrollContentBackground(.hidden)
             // Let the 1pt anchor row actually be 1pt (List's default min row
             // height would otherwise pad it to ~44).
@@ -290,6 +359,7 @@ struct TranscriptView<Header: View>: View {
             // Publish a scroll capability so a reply's "scroll to question" button
             // (deep inside a row) can move the viewport to the user message.
             .environment(\.transcriptScroll, TranscriptScrollAction { id, anchor in
+                earlierAnchor = nil
                 stuckToBottom = false
                 onPinnedChange(false)
                 withAnimation(Theme.Motion.scroll) {
@@ -297,6 +367,7 @@ struct TranscriptView<Header: View>: View {
                 }
             })
             .onScrollPhaseChange { _, phase, context in
+                if phase == .tracking || phase == .interacting { earlierAnchor = nil }
                 let wasUserScrolling = isUserScrolling
                 isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 if isUserScrolling || wasUserScrolling {
@@ -309,7 +380,9 @@ struct TranscriptView<Header: View>: View {
             // List row measurement. Only a user scroll can unpin the viewport;
             // shrinking its visible area or inserting rows cannot revoke intent.
             .onScrollGeometryChange(for: ScrollMetrics.self) { ScrollMetrics($0) } action: { old, new in
+                viewport.height = new.containerHeight
                 if isUserScrolling {
+                    if old.offsetY != new.offsetY { earlierAnchor = nil }
                     stuckToBottom = new.atBottom
                     onPinnedChange(new.atBottom)
                 } else if stuckToBottom {
@@ -318,7 +391,11 @@ struct TranscriptView<Header: View>: View {
                         || old.bottomInset != new.bottomInset {
                         proxy.scrollTo(bottomAnchor, anchor: .bottom)
                     }
-                } else if new.atBottom {
+                } else if earlierAnchor != nil, old.contentHeight != new.contentHeight {
+                    // Images/markdown may finish measuring after the first layout.
+                    // Keep the reading anchor until the next intentional scroll.
+                    restoreEarlierAnchor(proxy)
+                } else if new.atBottom, !isLoadingEarlier {
                     stuckToBottom = true
                     onPinnedChange(true)
                 }
@@ -333,7 +410,11 @@ struct TranscriptView<Header: View>: View {
                 // `!stuckToBottom` rejects the transient near-top geometry reported
                 // while the list is still settling onto the bottom anchor at open —
                 // otherwise a fresh open would immediately page in older history.
-                if nearTop, !stuckToBottom, !headLoaded, !isLoadingEarlier { loadEarlier() }
+                if nearTop, !stuckToBottom, !headLoaded, !isLoadingEarlier { loadEarlier(proxy) }
+            }
+            .onChange(of: historyResetTick) { _, _ in
+                windowStartTurn = nil
+                earlierAnchor = nil
             }
             // Streamed growth: follow instantly, but ONLY while pinned. A single
             // plain `scrollTo` per tick (no re-assert) — the content is already
@@ -348,6 +429,7 @@ struct TranscriptView<Header: View>: View {
             // rich content (code blocks / markdown) is still measuring taller, so
             // a far jump would otherwise land above the true bottom.
             .onChange(of: stickTick) { _, _ in
+                earlierAnchor = nil
                 stuckToBottom = true
                 onPinnedChange(true)
                 scrollToBottom(proxy)
