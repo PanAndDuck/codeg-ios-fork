@@ -107,7 +107,7 @@ final class EventStream: @unchecked Sendable {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 604_800   // 7 days — effectively no idle timeout
         cfg.timeoutIntervalForResource = 604_800
-        cfg.waitsForConnectivity = true
+        cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()
 
@@ -126,8 +126,7 @@ final class EventStream: @unchecked Sendable {
     }
 
     func start() {
-        let protocols = ["codeg-events", "codeg-token.\(EventStream.base64URLNoPad(token))"]
-        let newTask = session.webSocketTask(with: url, protocols: protocols)
+        let newTask = Self.makeWebSocketTask(session: session, url: url, token: token)
         lock.lock(); task = newTask; lock.unlock()
         newTask.resume()
         receiveLoop()
@@ -249,6 +248,13 @@ final class EventStream: @unchecked Sendable {
 
     // MARK: - Helpers
 
+    static func makeWebSocketTask(session: URLSession, url: URL, token: String) -> URLSessionWebSocketTask {
+        let protocols = ["codeg-events", "codeg-token.\(base64URLNoPad(token))"]
+        let task = session.webSocketTask(with: url, protocols: protocols)
+        task.maximumMessageSize = 64 * 1024 * 1024
+        return task
+    }
+
     static func base64URLNoPad(_ string: String) -> String {
         Data(string.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
@@ -258,9 +264,11 @@ final class EventStream: @unchecked Sendable {
 
     static func websocketURL(from baseURL: URL) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
-        components?.scheme = (baseURL.scheme == "https") ? "wss" : "ws"
-        components?.path = "/ws/events"
+        components?.scheme = (baseURL.scheme?.lowercased() == "https") ? "wss" : "ws"
+        let prefix = components?.percentEncodedPath ?? ""
+        components?.percentEncodedPath = prefix + (prefix.hasSuffix("/") ? "" : "/") + "ws/events"
         components?.query = nil
+        components?.fragment = nil
         return components?.url ?? baseURL
     }
 }

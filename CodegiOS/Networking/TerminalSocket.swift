@@ -45,8 +45,7 @@ final class TerminalSocket: @unchecked Sendable {
     }
 
     func start() {
-        let protocols = ["codeg-events", "codeg-token.\(EventStream.base64URLNoPad(token))"]
-        let newTask = session.webSocketTask(with: url, protocols: protocols)
+        let newTask = EventStream.makeWebSocketTask(session: session, url: url, token: token)
         lock.lock(); task = newTask; lock.unlock()
         newTask.resume()
         receiveLoop()
