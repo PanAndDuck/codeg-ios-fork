@@ -219,19 +219,77 @@ disclosure. A different certificate is rejected even if system-trusted;
 Changing editor fields clears stale probe results. Imported QR pins are staged
 with the other fields and saved together.
 
-`SessionFactory.sessions(for:)` caches a `Sessions` bundle by profile UUID and
-URL/pin. `Sessions[.standard/.read/.probe/.install/.stream]` retains the existing
-timeouts, with a `TrustEvaluator` for that origin. `ServerStore` invalidates the
-bundle on URL/pin changes or deletion; `finishTasksAndInvalidate` drains active
-tasks. Stateful views refresh on trust-policy changes. Editor probes use a
-separate factory. Every HTTP request uses its own task evaluator so a rejected
-fingerprint is attributed to that request; WebSockets use the session delegate.
-Unpinned requests retain system trust. Matching pins accept self-signed leaf
-certificates; mismatches always reject. Pinned redirects cannot leave the HTTPS
-origin or downgrade to HTTP.
+`SessionFactory.Sessions[.standard/.read/.probe/.install/.stream]` retains the
+existing timeouts, with a `TrustEvaluator` for that origin. Editor probes use a
+separate factory. Saved servers use a shared `ConnectionTransport` with an
+immutable URL/token/headers/session snapshot for each generation. Every HTTP
+request uses its own task evaluator so a rejected fingerprint is attributed to
+that request; WebSockets use the session delegate. Unpinned requests retain
+system trust. Matching pins accept self-signed leaf certificates; mismatches
+always reject. Authenticated redirects, including unpinned HTTP, stay on the
+same scheme, host and port so proxy credentials cannot leave their origin.
+
+## Custom headers and LAN / Relay failover
+
+Edit Server supports name/value headers such as `CF-Access-Client-Id` and
+`CF-Access-Client-Secret`. All values use secure fields and are stored with the
+token in one atomic Keychain credentials item. The editor rejects invalid
+names, CR/LF/control characters, duplicate names (case insensitive), and
+reserved `Authorization`, `Sec-WebSocket-*`, `Host`, `Connection`, `Upgrade`,
+and `Content-Length`. The request layer also filters forbidden entries. Headers
+apply to every server HTTP command, health probe, and both EventStream and
+TerminalSocket upgrade requests. The WebSocket auth subprotocol remains
+`codeg-events, codeg-token.<base64url-token>`.
+
+The original `urlString` / `pinnedCertSHA256` remain the primary endpoint.
+Optional `secondaryEndpoint` contains its own `urlString` / `pinnedCertSHA256`.
+Each pin has the same strict trust and explicit TOFU behavior. Test Connection
+has a primary/relay selector, and certificate results belong to that selection.
+The primary's LAN/Relay type is editable (legacy profiles default to LAN; relay
+QR sets Relay). A relay QR imported into an existing LAN profile first offers
+to keep LAN and add/replace the secondary, replace primary, or cancel. Nothing
+is changed before that choice; Save persists the draft. Both endpoints must
+represent the same codeg server and share its token/custom headers.
+
+`EndpointSelector` is a pure policy core. On startup, an I1 meaningful network
+change (regained connectivity or active interface change), or two consecutive
+transport/server failures, `ServerStore` concurrently probes `POST /api/health`
+on both candidates. LAN has a 1.5s total/request budget; Relay has 5s. Probe
+sessions do not wait for connectivity. HTTP and WebSocket failure streaks are
+separate so a successful HTTP touch cannot mask failed socket upgrades.
+
+Healthy primary wins on Wi-Fi. Otherwise healthy secondary wins; primary is
+the fallback if it is the only healthy endpoint. When neither is healthy, the
+last choice is retained. The result is cached until another trigger; stale
+probes from a prior network/configuration cannot overwrite it. Ordinary
+401/403/429/validation errors do not cause repeated failover. TLS rejection is
+never an implicit trust action. Server rows show the active URL and LAN/Relay
+badge; the session navigation header shows the same subtle badge.
+
+Runtime selection does not change profile/view identity. On a switch, the
+shared handle publishes fresh clients' connection state and sessions, closes
+old event/terminal sockets with `endpoint changed`, then cancels old session
+tasks. HTTP task creation is serialized with session invalidation, and removed
+server handles reject new requests/sockets. Temporary editor clients do not
+invalidate sessions still owned by the editor cache. I2 consumes `.closed` and immediately reconnects with the existing live
+turn/cursor. Terminal reconnect keeps the server PTY. In-flight old HTTP
+results become `connectionLost`; mutating commands are never automatically
+replayed by failover (I2 retains its ambiguous-prompt handling). Terminal
+output produced during disconnection still has no replay, as before.
+
+Metadata stays at `codeg.servers.v1`. New optional fields decode safely when
+absent: `secondaryEndpoint`, `customHeaders` (names + empty values in JSON),
+and `credentialsRevision` (nonsecret view identity revision for secret edits).
+Runtime endpoint choice is not persisted. Keychain reads legacy token-only
+accounts and migrates them on the next save to `<UUID>.credentials`, then
+removes the legacy item. The existing unsigned-Simulator-only fallback remains;
+device builds never store these secrets in UserDefaults. Downgrading to a
+pre-I6 binary after migration requires re-entering the token; keep current
+Keychain items for a later upgrade. No server/database migration is needed.
 
 Run pure/migration/QR tests with `scripts/build-fork.sh test`. To exercise real
-HTTPS, status checks, TOFU, replacement, and event/terminal WSS:
+HTTPS, status checks, TOFU, replacement, custom headers, redirects, real endpoint
+switching, and event/terminal WSS:
 
 ```bash
 scripts/test-pinning.sh

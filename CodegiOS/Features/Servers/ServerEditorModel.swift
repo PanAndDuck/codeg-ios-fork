@@ -20,6 +20,11 @@ final class ServerEditorModel {
     var token: String { didSet { fieldsChanged() } }
     private(set) var pinnedCertSHA256: String?
     private(set) var pairingMode: String?
+    var customHeaders: [HeaderPair] { didSet { fieldsChanged() } }
+    var secondaryURLString: String { didSet { fieldsChanged() } }
+    private(set) var secondaryPinnedCertSHA256: String?
+    var testEndpoint: EndpointSelector.Endpoint = .primary { didSet { fieldsChanged() } }
+    private(set) var pendingRelayPairing: PairingPayload?
     private(set) var scanError: String?
     private let probeID = UUID()
     private let sessionFactory = SessionFactory()
@@ -44,6 +49,7 @@ final class ServerEditorModel {
     init(
         editing: ServerProfile? = nil,
         hasExistingToken: Bool = false,
+        customHeaders: [HeaderPair] = [],
         resolveExistingToken: @escaping @MainActor () -> String? = { nil }
     ) {
         self.editing = editing
@@ -51,6 +57,9 @@ final class ServerEditorModel {
         self.urlString = editing?.urlString ?? ""
         self.pinnedCertSHA256 = editing?.pinnedCertSHA256
         self.pairingMode = editing?.pairingMode
+        self.customHeaders = customHeaders
+        self.secondaryURLString = editing?.secondaryEndpoint?.urlString ?? ""
+        self.secondaryPinnedCertSHA256 = editing?.secondaryEndpoint?.pinnedCertSHA256
         self.hasExistingToken = editing != nil && hasExistingToken
         self.resolveExistingToken = resolveExistingToken
         // The token secret is never loaded into editable state. An empty field
@@ -98,7 +107,8 @@ final class ServerEditorModel {
     /// unless an existing token can be kept (blank field while one is already
     /// stored).
     var canSave: Bool {
-        guard !trimmedName.isEmpty, parsedBaseURL != nil else { return false }
+        guard !trimmedName.isEmpty, parsedBaseURL != nil, headerValidationError == nil,
+              !hasSecondary || parsedSecondaryURL != nil else { return false }
         return !trimmedToken.isEmpty || canKeepExistingToken
     }
 
@@ -127,8 +137,32 @@ final class ServerEditorModel {
     /// to send — either freshly entered, or the existing stored one when editing
     /// with the field left blank (so "keep existing" can still be verified).
     var canTest: Bool {
-        guard parsedBaseURL != nil else { return false }
+        guard selectedTestURL != nil, headerValidationError == nil else { return false }
         return !trimmedToken.isEmpty || canKeepExistingToken
+    }
+
+    var headerValidationError: String? { RequestHeaders.validationError(customHeaders) }
+    var primaryIsRelay: Bool {
+        get { pairingMode == "relay" }
+        set { pairingMode = newValue ? "relay" : "direct"; fieldsChanged() }
+    }
+    var hasSecondary: Bool { !secondaryURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var parsedSecondaryURL: URL? {
+        guard let url = Self.normalizedURL(from: secondaryURLString),
+              secondaryPinnedCertSHA256 == nil || url.scheme == "https" else { return nil }
+        return url
+    }
+    var secondaryEndpointForSave: ServerEndpoint? {
+        guard let url = parsedSecondaryURL else { return nil }
+        return ServerEndpoint(urlString: url.absoluteString, pinnedCertSHA256: secondaryPinnedCertSHA256)
+    }
+    var selectedTestURL: URL? { testEndpoint == .primary ? parsedBaseURL : parsedSecondaryURL }
+    var selectedPin: String? { testEndpoint == .primary ? pinnedCertSHA256 : secondaryPinnedCertSHA256 }
+
+    func removeSecondary() {
+        secondaryURLString = ""
+        secondaryPinnedCertSHA256 = nil
+        testEndpoint = .primary
     }
 
     /// Coerce a user-entered address into a reachable `http`/`https` URL, or nil.
@@ -192,7 +226,7 @@ final class ServerEditorModel {
     /// display a success/failure that no longer matches the visible fields.
     func testConnection() async {
         guard !isTesting else { return }
-        guard let baseURL = parsedBaseURL else {
+        guard headerValidationError == nil, let baseURL = selectedTestURL else {
             testResult = .failure(message: APIError.invalidURL.localizedDescription)
             return
         }
@@ -200,9 +234,11 @@ final class ServerEditorModel {
         // is left blank on an edit — that's what a blank-field save would use, so
         // the test exercises the same credentials. `probedToken` snapshots the
         // *field* (not the resolved token) for the staleness check below.
-        let probedURL = urlString
+        let probedURL = selectedTestURL
+        let probedEndpoint = testEndpoint
         let probedToken = trimmedToken
-        let probedPin = pinnedCertSHA256
+        let probedPin = selectedPin
+        let probedHeaders = customHeaders
         let tokenToSend = trimmedToken.isEmpty ? (resolveExistingToken() ?? "") : trimmedToken
 
         isTesting = true
@@ -211,7 +247,7 @@ final class ServerEditorModel {
 
         let profile = ServerProfile(id: probeID, name: name, urlString: baseURL.absoluteString,
                                     pinnedCertSHA256: probedPin)
-        let client = CodegClient(baseURL: baseURL, token: tokenToSend, sessions: sessionFactory.sessions(for: profile))
+        let client = CodegClient(baseURL: baseURL, token: tokenToSend, sessions: sessionFactory.sessions(for: profile), customHeaders: probedHeaders)
         let result: TestResult
         do {
             let health = try await client.health()
@@ -226,7 +262,8 @@ final class ServerEditorModel {
         // Only surface the result if the fields it was computed from still hold;
         // otherwise drop it (a newer edit invalidated this probe). `isTesting`
         // is always cleared via the defer above.
-        guard probedURL == urlString, probedToken == trimmedToken, probedPin == pinnedCertSHA256 else { return }
+        guard probedEndpoint == testEndpoint, probedURL == selectedTestURL,
+              probedToken == trimmedToken, probedPin == selectedPin, probedHeaders == customHeaders else { return }
         testResult = result
     }
 
@@ -242,7 +279,8 @@ final class ServerEditorModel {
         guard case .certificate(let fingerprint, let isMismatch) = testResult,
               !isMismatch || replacingPin,
               let canonical = try? CertificateFingerprint.normalize(fingerprint) else { return false }
-        pinnedCertSHA256 = canonical
+        if testEndpoint == .primary { pinnedCertSHA256 = canonical }
+        else { secondaryPinnedCertSHA256 = canonical }
         sessionFactory.invalidate(probeID)
         fieldsChanged()
         return true
@@ -256,17 +294,43 @@ final class ServerEditorModel {
     func applyScanned(_ raw: String) -> Bool {
         do {
             let pairing = try PairingPayload.parse(raw)
-            urlString = pairing.url.absoluteString
-            if let name = pairing.name { self.name = name }
-            if let token = pairing.token { self.token = token }
-            pinnedCertSHA256 = pairing.fingerprint
-            pairingMode = pairing.mode
+            if pairing.shouldOfferSecondary(editing: editing, primaryMode: pairingMode, primaryURL: parsedBaseURL) {
+                pendingRelayPairing = pairing
+            } else {
+                importPrimary(pairing)
+            }
             scanError = nil
             fieldsChanged()
             return true
         } catch {
+            pendingRelayPairing = nil
             scanError = error.localizedDescription
             return false
         }
+    }
+
+    func cancelRelayImport() { pendingRelayPairing = nil }
+
+    func resolveRelayImport(addAsSecondary: Bool) {
+        guard let pairing = pendingRelayPairing else { return }
+        pendingRelayPairing = nil
+        if addAsSecondary {
+            secondaryURLString = pairing.url.absoluteString
+            secondaryPinnedCertSHA256 = pairing.fingerprint
+            if let token = pairing.token { self.token = token }
+            testEndpoint = .secondary
+        } else {
+            importPrimary(pairing)
+        }
+        fieldsChanged()
+    }
+
+    private func importPrimary(_ pairing: PairingPayload) {
+        urlString = pairing.url.absoluteString
+        if let name = pairing.name { self.name = name }
+        if let token = pairing.token { self.token = token }
+        pinnedCertSHA256 = pairing.fingerprint
+        pairingMode = pairing.mode
+        testEndpoint = .primary
     }
 }

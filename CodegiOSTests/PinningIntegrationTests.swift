@@ -95,6 +95,101 @@ final class PinningIntegrationTests: XCTestCase {
         guard case .ready = terminalFrame else { return XCTFail("Pinned TerminalSocket did not reach ready: \(terminalFrame)") }
     }
 
+    func testCustomHeadersReachHTTPAndBothPinnedWebSockets() async throws {
+        let fixture = try fixture()
+        let url = fixture.url.appendingPathComponent("headers")
+        let sessions = SessionFactory.Sessions(baseURL: url, pin: fixture.fingerprint)
+        let client = CodegClient(baseURL: url, token: "test-only", sessions: sessions,
+                                 customHeaders: [.init(name: "CF-Access-Client-Id", value: "fixture-id"),
+                                                 .init(name: "CF-Access-Client-Secret", value: "fixture-secret")])
+        let health = try await client.health()
+        XCTAssertEqual(health.status, "ok")
+        let stream = client.makeEventStream()
+        defer { stream.close() }
+        stream.start()
+        guard case .ready = try await firstFrame(from: stream.frames) else { return XCTFail("Event upgrade lost custom headers") }
+        let terminal = client.makeTerminalSocket()
+        defer { terminal.close() }
+        terminal.start()
+        guard case .ready = try await firstFrame(from: terminal.frames) else { return XCTFail("Terminal upgrade lost custom headers") }
+    }
+
+    func testEndpointProbeUsesHeadersAndRejectsWrongEndpointPin() async throws {
+        let fixture = try fixture()
+        let endpoint = ServerEndpoint(urlString: fixture.url.appendingPathComponent("headers").absoluteString,
+                                      pinnedCertSHA256: fixture.fingerprint)
+        let headers = [HeaderPair(name: "CF-Access-Client-Id", value: "fixture-id"),
+                       HeaderPair(name: "CF-Access-Client-Secret", value: "fixture-secret")]
+        let healthy = await EndpointProbe.check(endpoint, token: "test-only", headers: headers, timeout: 5)
+        XCTAssertTrue(healthy)
+        let missingHeaders = await EndpointProbe.check(endpoint, token: "test-only", headers: [], timeout: 5)
+        XCTAssertFalse(missingHeaders)
+        let wrongPin = ServerEndpoint(urlString: endpoint.urlString, pinnedCertSHA256: String(repeating: "00", count: 32))
+        let trustedWrongly = await EndpointProbe.check(wrongPin, token: "test-only", headers: headers, timeout: 5)
+        XCTAssertFalse(trustedWrongly)
+    }
+
+    func testAuthenticatedRedirectCannotChangeOriginOrScheme() async throws {
+        let fixture = try fixture()
+        for route in ["redirect-port", "redirect-scheme", "redirect-host"] {
+            let url = fixture.url.appendingPathComponent(route)
+            let client = CodegClient(baseURL: url, token: "test-only",
+                                     sessions: .init(baseURL: url, pin: fixture.fingerprint),
+                                     customHeaders: [.init(name: "X-Secret", value: "fixture-only")])
+            do {
+                _ = try await client.health()
+                XCTFail("Cross-origin redirect was followed")
+            } catch APIError.server(let status, _, _) {
+                XCTAssertEqual(status, 307)
+            }
+        }
+        let url = fixture.url.appendingPathComponent("redirect-same")
+        let client = CodegClient(baseURL: url, token: "test-only", sessions: .init(baseURL: url, pin: fixture.fingerprint))
+        let health = try await client.health()
+        XCTAssertEqual(health.status, "ok")
+    }
+
+    @MainActor
+    func testRealDualEndpointFailoverRecreatesBothActiveSockets() async throws {
+        let fixture = try fixture()
+        let suite = "I6-live-failover-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ServerStore(defaults: defaults)
+        // Primary accepts WSS but its health endpoint is deliberately offline.
+        let profile = try XCTUnwrap(store.add(name: "Fixture", urlString: fixture.url.appendingPathComponent("offline").absoluteString,
+                                              token: "test-only", pinnedCertSHA256: fixture.fingerprint,
+                                              secondaryEndpoint: .init(urlString: fixture.url.appendingPathComponent("headers").absoluteString,
+                                                                       pinnedCertSHA256: fixture.fingerprint),
+                                              customHeaders: [.init(name: "CF-Access-Client-Id", value: "fixture-id"),
+                                                              .init(name: "CF-Access-Client-Secret", value: "fixture-secret")]))
+        defer { store.delete(profile) }
+        let client = try XCTUnwrap(store.client(for: profile))
+        let event = client.makeEventStream()
+        let terminal = client.makeTerminalSocket()
+        defer { event.close(); terminal.close() }
+        event.start()
+        terminal.start()
+        guard case .ready = try await firstFrame(from: event.frames),
+              case .ready = try await firstFrame(from: terminal.frames) else { return XCTFail("Initial sockets did not open") }
+        await store.prepareEndpoint(for: profile)
+        XCTAssertEqual(store.endpointLabel(for: profile), "Relay")
+        XCTAssertEqual(client.baseURL.path, "/headers")
+        guard case .closed(let eventReason) = try await firstFrame(from: event.frames),
+              case .closed(let terminalReason) = try await firstFrame(from: terminal.frames) else { return XCTFail("Old consumers were not notified") }
+        XCTAssertEqual(eventReason, "endpoint changed")
+        XCTAssertEqual(terminalReason, "endpoint changed")
+        let newEvent = client.makeEventStream()
+        let newTerminal = client.makeTerminalSocket()
+        defer { newEvent.close(); newTerminal.close() }
+        newEvent.start()
+        newTerminal.start()
+        guard case .ready = try await firstFrame(from: newEvent.frames),
+              case .ready = try await firstFrame(from: newTerminal.frames) else { return XCTFail("Replacement sockets did not open") }
+        let health = try await client.health()
+        XCTAssertEqual(health.status, "ok")
+    }
+
     @MainActor
     func testEditorTOFUAndReplacementRequireExplicitAction() async throws {
         let fixture = try fixture()
@@ -145,5 +240,28 @@ final class PinningIntegrationTests: XCTestCase {
         XCTAssertNil(model.testResult)
         XCTAssertFalse(model.trustPresentedCertificate())
         XCTAssertNil(model.pinnedCertSHA256)
+    }
+
+    @MainActor
+    func testSecondaryTOFUOnlyChangesSecondaryPinAndTargetChangeClearsResult() async throws {
+        let fixture = try fixture()
+        let primaryPin = String(repeating: "ab", count: 32)
+        let profile = ServerProfile(name: "Home", urlString: "https://lan.invalid:18400", pinnedCertSHA256: primaryPin,
+                                    secondaryEndpoint: .init(urlString: fixture.url.absoluteString))
+        let model = ServerEditorModel(editing: profile)
+        model.token = "test-only"
+        model.testEndpoint = .secondary
+        await model.testConnection()
+        XCTAssertEqual(model.testResult, .certificate(fingerprint: fixture.fingerprint, isMismatch: false))
+        model.testEndpoint = .primary
+        XCTAssertNil(model.testResult)
+        XCTAssertFalse(model.trustPresentedCertificate())
+        model.testEndpoint = .secondary
+        await model.testConnection()
+        XCTAssertTrue(model.trustPresentedCertificate())
+        XCTAssertEqual(model.pinnedCertSHA256, primaryPin)
+        XCTAssertEqual(model.secondaryPinnedCertSHA256, fixture.fingerprint)
+        await model.testConnection()
+        XCTAssertEqual(model.testResult, .success(version: "test"))
     }
 }

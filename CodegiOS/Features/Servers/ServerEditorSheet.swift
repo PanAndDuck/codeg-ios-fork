@@ -30,6 +30,7 @@ struct ServerEditorSheet: View {
         _model = State(initialValue: ServerEditorModel(
             editing: editing,
             hasExistingToken: hasExistingToken,
+            customHeaders: editing.map { store.customHeaders(for: $0) } ?? [],
             // Resolve the stored token lazily so Test Connection can fall back to
             // it when the field is left blank, without holding the secret.
             resolveExistingToken: { editing.flatMap { store.token(for: $0) } }
@@ -44,7 +45,9 @@ struct ServerEditorSheet: View {
                 ScrollView {
                     VStack(spacing: 18) {
                         connectionSection
+                        secondarySection
                         authSection
+                        headersSection
                         certificateSection
                         testSection
                     }
@@ -106,12 +109,27 @@ struct ServerEditorSheet: View {
         } message: {
             Text("The certificate changed. This could be a man-in-the-middle attack or a relay certificate rotation. Verify the new SHA-256 fingerprint through a trusted channel before replacing the pin.")
         }
+        .confirmationDialog("Use this Relay with your LAN server?", isPresented: Binding(
+            get: { model.pendingRelayPairing != nil },
+            set: { if !$0 { model.cancelRelayImport() } }
+        ), titleVisibility: .visible) {
+            Button("Use as secondary Relay") { model.resolveRelayImport(addAsSecondary: true) }
+            Button("Replace primary endpoint", role: .destructive) { model.resolveRelayImport(addAsSecondary: false) }
+            Button("Cancel", role: .cancel) { model.cancelRelayImport() }
+        } message: {
+            Text("Keep the LAN address and use this Relay when LAN is unavailable. An existing secondary endpoint will be replaced. Both endpoints share the server token and custom headers.")
+        }
     }
 
     // MARK: - Sections
 
     private var connectionSection: some View {
         EditorSection(title: "Connection") {
+            Picker("Primary endpoint type", selection: $model.primaryIsRelay) {
+                Text(verbatim: "LAN").tag(false)
+                Text("Relay").tag(true)
+            }
+            .pickerStyle(.segmented)
             FieldRow(label: "Name") {
                 TextField("My codeg server", text: $model.name)
                     .textContentType(.name)
@@ -172,8 +190,56 @@ struct ServerEditorSheet: View {
         }
     }
 
+    private var secondarySection: some View {
+        EditorSection(title: "Secondary endpoint (Relay)", footer: "Prefer LAN on Wi-Fi when healthy; otherwise use the Relay. Each endpoint has its own certificate pin.") {
+            TextField("https://relay.example:18443", text: $model.secondaryURLString)
+                .font(.mono(15))
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("Secondary endpoint URL")
+            if model.hasSecondary {
+                Button("Remove secondary endpoint", role: .destructive) { model.removeSecondary() }
+            }
+        }
+    }
+
+    private var headersSection: some View {
+        EditorSection(title: "Custom headers", footer: "Header values are stored securely with the token and sent to both endpoints, including WebSocket connections.") {
+            ForEach(model.customHeaders.indices, id: \.self) { index in
+                VStack(spacing: 8) {
+                    HStack {
+                        TextField("Header name", text: $model.customHeaders[index].name)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.mono(14))
+                        Button(role: .destructive) { model.customHeaders.remove(at: index) } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .accessibilityLabel("Remove header")
+                    }
+                    SecureField("Secret header value", text: $model.customHeaders[index].value)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.mono(14))
+                }
+            }
+            Button("Add header") { model.customHeaders.append(HeaderPair(name: "", value: "")) }
+            if let error = model.headerValidationError {
+                Text(verbatim: error).font(.footnote).foregroundStyle(Theme.danger)
+            }
+        }
+    }
+
     private var testSection: some View {
         VStack(spacing: 12) {
+            if model.hasSecondary {
+                Picker("Test endpoint", selection: $model.testEndpoint) {
+                    Text("Primary").tag(EndpointSelector.Endpoint.primary)
+                    Text("Relay").tag(EndpointSelector.Endpoint.secondary)
+                }
+                .pickerStyle(.segmented)
+            }
             Button {
                 focusedField = nil
                 Task { await model.testConnection() }
@@ -219,7 +285,7 @@ struct ServerEditorSheet: View {
 
     @ViewBuilder
     private var certificateSection: some View {
-        if let pin = model.pinnedCertSHA256 {
+        if let pin = model.selectedPin {
             EditorSection(title: "Certificate") {
                 DisclosureGroup("Pinned SHA-256 fingerprint") {
                     Text(CertificateFingerprint.display(pin))
@@ -230,7 +296,7 @@ struct ServerEditorSheet: View {
                 Text("The certificate pin is saved with this server when you tap Save.")
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
-                if model.parsedBaseURL == nil {
+                if model.selectedTestURL == nil {
                     Text("A pinned certificate requires an HTTPS server URL.")
                         .font(.footnote)
                         .foregroundStyle(Theme.danger)
@@ -273,17 +339,19 @@ struct ServerEditorSheet: View {
             updated.urlString = urlString
             updated.pinnedCertSHA256 = model.pinnedCertSHA256
             updated.pairingMode = model.pairingMode
+            updated.secondaryEndpoint = model.secondaryEndpointForSave
             // Pass the token only if the user re-entered one; nil keeps the
             // stored secret untouched.
-            guard store.update(updated, token: model.tokenForSave) else {
+            guard store.update(updated, token: model.tokenForSave, customHeaders: model.customHeaders) else {
                 saveError = tokenSaveFailureMessage
                 return nil
             }
-            return updated
+            return store.servers.first { $0.id == updated.id }
         } else {
             // canSave guarantees a non-empty trimmed token here.
             guard let profile = store.add(name: name, urlString: urlString, token: model.trimmedToken,
-                                          pinnedCertSHA256: model.pinnedCertSHA256, pairingMode: model.pairingMode) else {
+                                          pinnedCertSHA256: model.pinnedCertSHA256, pairingMode: model.pairingMode,
+                                          secondaryEndpoint: model.secondaryEndpointForSave, customHeaders: model.customHeaders) else {
                 saveError = tokenSaveFailureMessage
                 return nil
             }

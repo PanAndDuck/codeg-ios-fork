@@ -1,6 +1,363 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Primary endpoint type" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Primary endpoint type"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主连接类型"
+          }
+        }
+      }
+    },
+    "Use a valid header name and value. Authorization, WebSocket and connection headers are reserved." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use a valid header name and value. Authorization, WebSocket and connection headers are reserved."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入有效的标头名称和值。Authorization、WebSocket 和连接标头为保留字段。"
+          }
+        }
+      }
+    },
+    "Header names must be unique (case insensitive)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Header names must be unique (case insensitive)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标头名称不能重复（不区分大小写）。"
+          }
+        }
+      }
+    },
+    "Use this Relay with your LAN server?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use this Relay with your LAN server?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将此中继用于现有局域网服务器？"
+          }
+        }
+      }
+    },
+    "Use as secondary Relay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use as secondary Relay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用作备用中继"
+          }
+        }
+      }
+    },
+    "Replace primary endpoint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replace primary endpoint"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "替换主连接地址"
+          }
+        }
+      }
+    },
+    "Keep the LAN address and use this Relay when LAN is unavailable. An existing secondary endpoint will be replaced. Both endpoints share the server token and custom headers." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep the LAN address and use this Relay when LAN is unavailable. An existing secondary endpoint will be replaced. Both endpoints share the server token and custom headers."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留局域网地址，在局域网不可用时使用此中继。已有的备用地址将被替换。两个连接地址共用服务器令牌和自定义标头。"
+          }
+        }
+      }
+    },
+    "Secondary endpoint (Relay)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Secondary endpoint (Relay)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "备用连接地址（中继）"
+          }
+        }
+      }
+    },
+    "Prefer LAN on Wi-Fi when healthy; otherwise use the Relay. Each endpoint has its own certificate pin." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prefer LAN on Wi-Fi when healthy; otherwise use the Relay. Each endpoint has its own certificate pin."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Wi-Fi 下优先使用可连接的局域网地址，否则使用中继。每个连接地址使用独立的证书指纹。"
+          }
+        }
+      }
+    },
+    "Secondary endpoint URL" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Secondary endpoint URL"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "备用连接 URL"
+          }
+        }
+      }
+    },
+    "Remove secondary endpoint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove secondary endpoint"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除备用连接地址"
+          }
+        }
+      }
+    },
+    "Custom headers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom headers"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义请求标头"
+          }
+        }
+      }
+    },
+    "Header values are stored securely with the token and sent to both endpoints, including WebSocket connections." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Header values are stored securely with the token and sent to both endpoints, including WebSocket connections."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标头值与令牌一起安全保存，并发送到两个连接地址，包括 WebSocket 连接。"
+          }
+        }
+      }
+    },
+    "Header name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Header name"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标头名称"
+          }
+        }
+      }
+    },
+    "Remove header" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove header"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除标头"
+          }
+        }
+      }
+    },
+    "Secret header value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Secret header value"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保密标头值"
+          }
+        }
+      }
+    },
+    "Add header" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add header"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加标头"
+          }
+        }
+      }
+    },
+    "Test endpoint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Test endpoint"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "测试连接地址"
+          }
+        }
+      }
+    },
+    "Primary" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Primary"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主连接"
+          }
+        }
+      }
+    },
+    "Relay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继"
+          }
+        }
+      }
+    },
+    "Active endpoint: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Active endpoint: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前连接：%@"
+          }
+        }
+      }
+    },
     "The server certificate is untrusted or does not match the saved pin. Verify it in Edit Server. SHA-256: %@" : {
       "extractionState" : "manual",
       "localizations" : {
