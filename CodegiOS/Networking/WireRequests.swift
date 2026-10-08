@@ -45,6 +45,36 @@ struct ConversationIdBody: Encodable, Sendable {
     let conversationId: Int
 }
 
+/// Selectors are mutually exclusive in the Rust handler.
+enum ConversationTurnWindow: Sendable {
+    case tail(Int)
+    case fromIndex(Int)
+}
+
+struct ConversationDetailBody: Encodable, Sendable {
+    let conversationId: Int
+    let tailTurns: Int?
+    let fromIndex: Int?
+
+    init(conversationId: Int, window: ConversationTurnWindow) {
+        self.conversationId = conversationId
+        switch window {
+        case .tail(let count):
+            tailTurns = count
+            fromIndex = nil
+        case .fromIndex(let index):
+            tailTurns = nil
+            fromIndex = index
+        }
+    }
+}
+
+struct ConversationTurnsBody: Encodable, Sendable {
+    let conversationId: Int
+    let beforeIndex: Int
+    let limit: Int
+}
+
 /// Body for `create_conversation` — creates a server-side conversation row in
 /// `folderId` for `agentType` (optional `title`) BEFORE the first prompt, so the
 /// server broadcasts a `conversation_upsert` to every client (the desktop/web
