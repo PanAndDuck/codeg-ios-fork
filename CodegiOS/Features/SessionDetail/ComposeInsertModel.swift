@@ -44,10 +44,16 @@ final class ComposeInsertModel {
     /// known-expert id set for the replace-prefix logic (the web's `expertIdSet`).
     var loadBuiltInExpertsAction: (() async throws -> [ExpertListItem])?
     var loadCommandsAction: (() async throws -> [AvailableCommandInfo])?
+    /// Backs the inline `@`-mention popup (not one of the "+" menu `Source`s,
+    /// which are sheet-presented — this loads lazily the first time the compose
+    /// bar detects a live `@token`).
+    var loadAgentsAction: (() async throws -> [AcpAgentInfo])?
 
     private(set) var quickMessages: [QuickMessage] = []
     private(set) var experts: [ExpertListItem] = []
     private(set) var commands: [AvailableCommandInfo] = []
+    private(set) var agents: [AcpAgentInfo] = []
+    private var agentsTask: Task<Void, Never>?
 
     /// Ids treated as "known experts" when deciding whether to replace an existing
     /// mention prefix. Mirrors the web's `expertIdSet` (built from the built-in
@@ -153,6 +159,37 @@ final class ComposeInsertModel {
     func teardown() {
         for task in tasks.values { task.cancel() }
         tasks.removeAll()
+        agentsTask?.cancel()
+    }
+
+    // MARK: - Inline `@`-mention (agents)
+
+    /// Loads the agent list once and memoizes it; safe to call on every
+    /// keystroke while a mention token is live.
+    func loadAgentsIfNeeded() {
+        guard agents.isEmpty, agentsTask == nil else { return }
+        agentsTask = Task { [weak self] in
+            // Clear the in-flight marker on every exit path (success, throw, or
+            // cancellation) — otherwise one transient failure (a network blip over
+            // a remote server, easy to hit) leaves `agentsTask` permanently
+            // non-nil, and the guard above blocks every later `@` from ever
+            // retrying the load for the rest of this screen's lifetime.
+            defer { self?.agentsTask = nil }
+            guard let self, let action = self.loadAgentsAction else { return }
+            guard let list = try? await action() else { return }
+            if Task.isCancelled { return }
+            self.agents = list.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+        }
+    }
+
+    /// Mentionable agents matching `query` (case-insensitive prefix/substring on
+    /// name), limited to enabled + available — mirroring the web's filter in
+    /// `use-reference-search.ts`.
+    func matchingAgents(for query: String) -> [AcpAgentInfo] {
+        let pool = agents.filter { $0.enabled && $0.available }
+        guard !query.isEmpty else { return pool }
+        let q = query.lowercased()
+        return pool.filter { $0.name.lowercased().contains(q) }
     }
 
     // MARK: - Insertion (pure draft transforms)
@@ -204,6 +241,52 @@ final class ComposeInsertModel {
         }
         guard !id.isEmpty, i < draft.endIndex, draft[i].isWhitespace else { return nil }
         return (id, draft.index(after: i))
+    }
+
+    /// Find a live `@token` at the very end of the draft — the trailing `@`
+    /// (preceded by start-of-string or whitespace) through the rest of the
+    /// string, so long as that rest contains no whitespace yet (still being
+    /// typed). Operates on the tail only: the plain `TextField` this backs
+    /// exposes no caret position, so an `@` earlier in an already-finished
+    /// message won't retrigger the popup — matching the common case of typing
+    /// a mention as you go.
+    /// `cursor` is where the live token ends — the draft's `endIndex` for the
+    /// plain-`TextField` fallback (no caret awareness), or the actual caret
+    /// position when called from the cursor-aware `MentionAwareTextEditor`. This
+    /// is what lets a mention be typed in the MIDDLE of existing text, not only
+    /// appended at the end: the scan runs up to the caret, not to the string's end.
+    func trailingMentionToken(in draft: String, upTo cursor: String.Index? = nil) -> (token: String, start: String.Index)? {
+        let cursor = cursor ?? draft.endIndex
+        guard let atIndex = draft[..<cursor].lastIndex(of: "@") else { return nil }
+        if atIndex != draft.startIndex {
+            let before = draft.index(before: atIndex)
+            guard draft[before].isWhitespace else { return nil }
+        }
+        let token = draft[draft.index(after: atIndex)..<cursor]
+        guard !token.contains(where: { $0.isWhitespace }) else { return nil }
+        return (String(token), atIndex)
+    }
+
+    /// Replace the live `@token` ending at `cursor` with the agent's markdown
+    /// reference badge (`[@Name](codeg://agent/<type>)`), matching the desktop/
+    /// web format the server parses into a delegation — mirroring `adapters.ts`'s
+    /// `agentToSuggestion` insertion. Falls back to inserting right at the cursor
+    /// when the token can't be found (e.g. called from outside the popup flow).
+    /// Everything from `cursor` onward is preserved untouched, so this is safe to
+    /// call with the caret anywhere in the draft, not only at its end. Returns
+    /// the new draft plus the UTF-16 offset to restore the caret to, right after
+    /// the inserted badge.
+    func draftInsertingAgentMention(_ agent: AcpAgentInfo, to draft: String, cursor: String.Index? = nil) -> (draft: String, cursorUTF16Offset: Int) {
+        let cursor = cursor ?? draft.endIndex
+        let badge = "[@\(agent.name)](codeg://agent/\(agent.agentType.rawValue)) "
+        let head: String
+        if let found = trailingMentionToken(in: draft, upTo: cursor) {
+            head = String(draft[draft.startIndex..<found.start])
+        } else {
+            head = String(draft[draft.startIndex..<cursor])
+        }
+        let newDraft = head + badge + String(draft[cursor...])
+        return (newDraft, (head + badge).utf16.count)
     }
 
     // MARK: - Helpers

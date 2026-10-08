@@ -25,7 +25,7 @@ struct ComposeBar: View {
     /// Backs the "+" menu's text-insert pickers (quick messages / experts / commands).
     let insertModel: ComposeInsertModel
 
-    @FocusState private var focused: Bool
+    @State private var focused = false
     /// Bumped on each send tap to fire a light "sent" impact immediately (rather
     /// than waiting for the turn to start streaming).
     @State private var sendHaptic = 0
@@ -34,6 +34,14 @@ struct ComposeBar: View {
     @State private var showFileImporter = false
     @State private var showCamera = false
     @State private var presentedInsert: ComposeInsertModel.Source?
+    /// The caret's UTF-16 offset into `text`, reported live by
+    /// `MentionAwareTextEditor` — `nil` while a range (not a single caret) is
+    /// selected. Drives `mentionToken` so `@` is detected wherever it's typed,
+    /// not only at the end of the draft.
+    @State private var cursorUTF16Offset: Int?
+    /// Set right after inserting a mention badge so the editor moves the caret
+    /// there on its next update; consumed (reset to `nil`) once applied.
+    @State private var pendingCursorUTF16Offset: Int?
 
     private var hasText: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -43,6 +51,20 @@ struct ComposeBar: View {
     }
     private var remainingSlots: Int {
         max(0, AttachmentPrep.maxCount - attachments.count)
+    }
+    /// The caret as a `String.Index` into `text` — `nil` when nothing has
+    /// reported a caret position yet (first render) or a range is selected.
+    private var cursorIndex: String.Index? {
+        guard let offset = cursorUTF16Offset,
+              offset >= 0, offset <= text.utf16.count else { return nil }
+        let index = text.utf16.index(text.utf16.startIndex, offsetBy: offset)
+        return String.Index(index, within: text)
+    }
+    /// The live `@token` ending at the caret, if any — drives the inline
+    /// mention popup below. Falls back to the draft's end when the editor
+    /// hasn't reported a caret yet, matching the old TextField-only behavior.
+    private var mentionToken: String? {
+        insertModel.trailingMentionToken(in: text, upTo: cursorIndex)?.token
     }
 
     var body: some View {
@@ -56,19 +78,28 @@ struct ComposeBar: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
+            mentionSuggestions
+
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
                     addButton
-                    TextField("Message", text: $text, axis: .vertical)
-                        .textInputAutocapitalization(.sentences)
-                        .lineLimit(1...6)
+                    // `UITextView`-backed, not a plain `TextField`: reports the
+                    // caret position (`cursorUTF16Offset`), which a `TextField`
+                    // cannot, so `mentionToken` can find "@" typed anywhere in
+                    // the draft rather than only at its end.
+                    MentionAwareTextEditor(
+                        text: $text,
+                        placeholder: String(localized: "Message"),
+                        isFocused: focused,
+                        onFocusChange: { focused = $0 },
+                        onCursorChange: { offset in
+                            cursorUTF16Offset = offset
+                        },
+                        pendingCursorUTF16Offset: $pendingCursorUTF16Offset
+                    )
                         // Match the transcript body so the text you type reads at
                         // the same size as the reply it produces (was `.callout`,
                         // visibly smaller than the messages).
-                        .font(Theme.Typography.messageBody)
-                        .foregroundStyle(Theme.textPrimary)
-                        .tint(Theme.accent)
-                        .focused($focused)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         // `xl` radius clamps to a capsule while the field is one
@@ -102,6 +133,10 @@ struct ComposeBar: View {
             photoLibrary: .shared()
         )
         .onChange(of: photoItems) { _, items in handlePhotoItems(items) }
+        .onChange(of: mentionToken) { _, token in
+            if token != nil { insertModel.loadAgentsIfNeeded() }
+        }
+        .animation(Theme.Motion.expand, value: mentionToken)
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in addCaptured(image) }
                 .ignoresSafeArea()
@@ -199,7 +234,63 @@ struct ComposeBar: View {
     private func send() {
         guard canSend else { return }
         sendHaptic &+= 1
+        focused = false
         onSend()
+    }
+
+    // MARK: - Inline `@`-mention popup
+
+    /// A small card of matching agents, sitting directly above the text field —
+    /// mirrors the web composer's inline `@`-mention popup (grouped suggestion
+    /// list), scoped here to agents since files/sessions/commits already have
+    /// their own entry points (attachments, the "+" menu).
+    @ViewBuilder
+    private var mentionSuggestions: some View {
+        if let token = mentionToken {
+            let matches = insertModel.matchingAgents(for: token)
+            if !matches.isEmpty {
+                // All matches stay reachable via scroll rather than truncating the
+                // list — a fixed max height keeps the popup from pushing the text
+                // field off-screen when many agents are configured.
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(matches.enumerated()), id: \.element.id) { index, agent in
+                            if index > 0 {
+                                Rectangle().fill(Theme.hairline).frame(height: 0.75)
+                            }
+                            mentionRow(agent)
+                        }
+                    }
+                }
+                .frame(maxHeight: min(CGFloat(matches.count) * 44, 5.5 * 44))
+                .scrollBounceBehavior(.basedOnSize)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                .hairlineBorder(Theme.Radius.md)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+    }
+
+    private func mentionRow(_ agent: AcpAgentInfo) -> some View {
+        Button {
+            let result = insertModel.draftInsertingAgentMention(agent, to: text, cursor: cursorIndex)
+            text = result.draft
+            pendingCursorUTF16Offset = result.cursorUTF16Offset
+        } label: {
+            HStack(spacing: 10) {
+                AgentIcon(agent: agent.agentType)
+                    .frame(width: 20, height: 20)
+                Text(agent.name)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Attachment intake
