@@ -24,4 +24,5 @@ Config/Signing.local.xcconfig
 .env.*
 !.env.example
 Secrets.xcconfig
+CodegiOSTests/LocalTLSFixture.json
 GoogleService-Info.plist

@@ -133,3 +133,46 @@ after uninstall; delete server profiles inside Codeg-Fork first if their saved
 tokens should also be removed. Leave `app.codeg.ios` and existing personal dev
 bundle ids untouched. Local fork build artifacts can be removed by deleting
 this checkout's `build/fork` directory.
+
+## Relay pairing and certificate trust
+
+The server QR scanner accepts version 1 pairing JSON (`v`, `mode`, `url`,
+`token`, optional `fp` and `name`), legacy JSON (`url`/`address`/`server`),
+plain URLs and URLs with `?token=`. `fp` is the SHA-256 of the **leaf certificate
+DER**, not its public key. Prefixes `sha256/` and `SHA256:`, colons and whitespace
+are normalized to 64 lowercase hex characters. Invalid fingerprints reject
+the entire import without changing the editor fields. A pin requires HTTPS.
+
+For a self-signed endpoint, **Test Connection** shows the certificate's SHA-256
+fingerprint in uppercase colon-separated pairs. After checking it against a
+trusted source, tap **Trust this certificate** to stage the pin and retry.
+**Save** persists it with the profile. Existing pins appear in a collapsed
+disclosure. A different certificate is rejected even if system-trusted;
+**Replace pin** displays a separate confirmation before staging the replacement.
+Changing editor fields clears stale probe results. Imported QR pins are staged
+with the other fields and saved together.
+
+`SessionFactory.sessions(for:)` caches a `Sessions` bundle by profile UUID and
+URL/pin. `Sessions[.standard/.read/.probe/.install/.stream]` retains the existing
+timeouts, with a `TrustEvaluator` for that origin. `ServerStore` invalidates the
+bundle on URL/pin changes or deletion; `finishTasksAndInvalidate` drains active
+tasks. Stateful views refresh on trust-policy changes. Editor probes use a
+separate factory. Every HTTP request uses its own task evaluator so a rejected
+fingerprint is attributed to that request; WebSockets use the session delegate.
+Unpinned requests retain system trust. Matching pins accept self-signed leaf
+certificates; mismatches always reject. Pinned redirects cannot leave the HTTPS
+origin or downgrade to HTTP.
+
+Run pure/migration/QR tests with `scripts/build-fork.sh test`. To exercise real
+HTTPS, status checks, TOFU, replacement, and event/terminal WSS:
+
+```bash
+scripts/test-pinning.sh
+```
+
+This generates an ephemeral certificate under `build/fork`, starts a Python
+TLS fixture on **127.0.0.1:18455**, and runs the fork Simulator tests. The EXIT
+trap stops only its recorded Python process and removes the certificate, key,
+fixture resource and temporary data directories. Integration cases skip when
+the generated fixture resource is absent. No codeg server or physical device
+is used.
