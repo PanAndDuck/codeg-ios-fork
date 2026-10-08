@@ -163,6 +163,133 @@ final class SessionWindowLoadTests: XCTestCase {
                                  session: URLSession(configuration: configuration))
         return SessionDetailViewModel(client: client, conversationID: 42)
     }
+
+    @MainActor
+    func testRecoveryAdoptsCountUnchangedContentUpdate() async throws {
+        let partial = try recoveryDetail(text: "partial", running: true)
+        let finished = try recoveryDetail(text: "complete reply", running: false)
+        WindowURLProtocol.respond = { request, attempt in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "acp_find_connection_for_conversation": return (200, Data("null".utf8))
+            default: return (200, attempt == 1 ? partial : finished)
+            }
+        }
+        let model = makeModel()
+        await model.load()
+        XCTAssertEqual(model.turns.last?.blocks, [.text("complete reply")])
+        XCTAssertNil(model.liveTurn)
+        XCTAssertFalse(model.isInFlight)
+        XCTAssertEqual(WindowURLProtocol.bodies("get_folder_conversation"), [
+            ["conversationId": 42, "tailTurns": 60], ["conversationId": 42, "fromIndex": 60]
+        ])
+        model.teardown()
+    }
+
+    @MainActor
+    func testRecoveryAdoptsCountIncreasedReply() async throws {
+        let partial = try recoveryDetail(text: "partial", running: true)
+        let finished = try recoveryDetail(text: "new reply", running: false, extraTurn: true)
+        WindowURLProtocol.respond = { request, attempt in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "acp_find_connection_for_conversation": return (200, Data("null".utf8))
+            default: return (200, attempt == 1 ? partial : finished)
+            }
+        }
+        let model = makeModel()
+        await model.load()
+        XCTAssertEqual(model.turns.last?.id, "new")
+        XCTAssertEqual(model.turns.last?.blocks, [.text("new reply")])
+        XCTAssertNil(model.liveTurn)
+        model.teardown()
+    }
+
+    @MainActor
+    func testRecoveryKeepsRetryingUntilContentChanges() async throws {
+        let partial = try recoveryDetail(text: "partial", running: true)
+        let unchanged = try recoveryDetail(text: "partial", running: false)
+        let finished = try recoveryDetail(text: "complete reply", running: false)
+        let retried = expectation(description: "Retry fetch after an unchanged persisted reply")
+        WindowURLProtocol.respond = { request, attempt in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "acp_find_connection_for_conversation": return (200, Data("null".utf8))
+            default:
+                if attempt == 3 { retried.fulfill() }
+                return (200, attempt == 1 ? partial : (attempt == 2 ? unchanged : finished))
+            }
+        }
+        let model = makeModel()
+        model.screenDidAppear()
+        await model.load()
+        XCTAssertTrue(model.isReconnecting)
+        XCTAssertNotNil(model.liveTurn)
+        XCTAssertEqual(model.turns.last?.blocks, [.text("partial")])
+        await fulfillment(of: [retried], timeout: 3)
+        // HTTP delivery precedes the model's main-actor continuation.
+        for _ in 0..<100 where model.liveTurn != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.turns.last?.blocks, [.text("complete reply")])
+        XCTAssertNil(model.liveTurn)
+        model.teardown()
+    }
+
+    private func recoveryDetail(text: String, running: Bool, extraTurn: Bool = false) throws -> Data {
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            WindowFixtures.detail(ids: extraTurn ? ["reply", "new"] : ["reply"],
+                                  offset: 60, total: extraTurn ? 62 : 61, hash: "seam")) as? [String: Any])
+        var summary = try XCTUnwrap(json["summary"] as? [String: Any])
+        summary["status"] = running ? "in_progress" : "completed"
+        json["summary"] = summary
+        var turns = try XCTUnwrap(json["turns"] as? [[String: Any]])
+        turns[turns.count - 1]["role"] = "assistant"
+        turns[turns.count - 1]["blocks"] = [["type": "text", "text": text]]
+        json["turns"] = turns
+        return try JSONSerialization.data(withJSONObject: json)
+    }
+
+    @MainActor
+    func testRelayOfflineMessageCoexistsWithContinuingRecovery() async throws {
+        let partial = try recoveryDetail(text: "partial", running: true)
+        let retried = expectation(description: "Discovery retries while relay is offline")
+        WindowURLProtocol.respond = { request, attempt in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "acp_find_connection_for_conversation":
+                if attempt == 2 { retried.fulfill() }
+                return (503, Data(#"{"code":"relay_agent_offline","message":"offline"}"#.utf8))
+            default: return (200, partial)
+            }
+        }
+        let model = makeModel()
+        model.screenDidAppear()
+        await model.load()
+        XCTAssertEqual(model.recoveryMessage, APIError.relayAgentOffline("offline").errorDescription)
+        XCTAssertTrue(model.isReconnecting)
+        XCTAssertTrue(model.isInFlight)
+        await fulfillment(of: [retried], timeout: 3)
+        model.teardown()
+    }
+
+    @MainActor
+    func testCancelledDiscoveryDoesNotShowRecoveryError() async throws {
+        let partial = try recoveryDetail(text: "partial", running: true)
+        WindowURLProtocol.respond = { request, _ in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "acp_find_connection_for_conversation": return nil
+            default: return (200, partial)
+            }
+        }
+        let model = makeModel()
+        let task = Task { await model.load() }
+        for _ in 0..<100 where model.liveTurn == nil { try await Task.sleep(for: .milliseconds(10)) }
+        task.cancel()
+        await task.value
+        XCTAssertNil(model.recoveryMessage)
+        XCTAssertNil(model.notice)
+        model.teardown()
+    }
 }
 
 /// Intercepts only this test host, including the existing shared folder session.

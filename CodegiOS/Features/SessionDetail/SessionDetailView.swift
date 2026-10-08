@@ -259,8 +259,13 @@ struct SessionDetailView: View {
                 if model.isReconnecting {
                     HStack(spacing: 10) {
                         ProgressView().controlSize(.small)
-                        Text("Reconnecting… (\(model.reconnectAttempt))")
-                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Reconnecting… (\(model.reconnectAttempt))")
+                            if let message = model.recoveryMessage {
+                                Text(message).foregroundStyle(.secondary)
+                            }
+                        }
+                        .font(.caption)
                         Spacer(minLength: 0)
                         if model.showsRecoveryBanner {
                             Button("Retry now") { model.retryRecoveryNow() }

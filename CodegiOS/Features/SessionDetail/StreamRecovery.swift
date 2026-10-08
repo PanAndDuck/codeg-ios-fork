@@ -54,9 +54,10 @@ struct SeqTracker {
 struct ReconnectSchedule {
     private(set) var attempt = 0
 
-    mutating func next(unitRandom: Double = Double.random(in: 0...1)) -> TimeInterval {
+    mutating func next(closeReason: String? = nil, unitRandom: Double = Double.random(in: 0...1)) -> TimeInterval {
         let base = min(30, 0.5 * pow(2, Double(min(attempt, 6))))
         attempt += 1
+        if closeReason == EventStream.CloseReason.networkChanged { return 0 }
         return base * (0.8 + 0.4 * min(1, max(0, unitRandom)))
     }
 
@@ -65,6 +66,15 @@ struct ReconnectSchedule {
 
 enum PromptAcceptance: Equatable {
     case accepted, rejected, unknown
+
+    static func isConfirmedRejection(_ error: Error) -> Bool {
+        switch error as? APIError {
+        case .unauthorized?, .turnInProgress?, .payloadTooLarge?,
+             .tooManyAuthFailures?, .relayTooManyConnections?: return true
+        case .server(let status, _, _)?: return (400..<500).contains(status)
+        default: return false
+        }
+    }
 
     static func decide(requestStarted: Bool, observedTurnEvent: Bool, clientMessageID: String,
                        snapshot: LiveSessionSnapshot?, confirmedRejection: Bool) -> Self {

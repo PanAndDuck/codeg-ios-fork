@@ -204,6 +204,9 @@ final class SessionDetailViewModel {
     private var isDiscoveringLive = false
     private var isScreenVisible = false
     private(set) var isReconnecting = false
+    private(set) var recoveryMessage: String?
+    private var turnReconciliation: TurnReconciliation?
+    private var reconciliationAttempts = 0
     private var promptClientMessageID: String?
     private var promptRequestStarted = false
     private var promptRequestInFlight = false
@@ -410,7 +413,7 @@ final class SessionDetailViewModel {
                 sessionStats = tail.sessionStats ?? sessionStats
             }
         } catch {
-            if !Task.isCancelled, !(error is CancellationError) { earlierTurnsError = Self.describe(error) }
+            if !Task.isCancelled { earlierTurnsError = APIError.userMessage(error) }
         }
     }
 
@@ -514,6 +517,7 @@ final class SessionDetailViewModel {
         isTurnActive = false
         isDiscoveringLive = false
         isReconnecting = false
+        recoveryMessage = nil
         closeStream()
         liveTurn = nil
         liveTurnFromReattach = false
@@ -826,6 +830,8 @@ final class SessionDetailViewModel {
         if let prior = liveTurn, !prior.isStreaming, !prior.isEmpty {
             promoteUnreconciled(prior)
         }
+        turnReconciliation = TurnReconciliation(totalTurns: transcriptTotal, turns: turns)
+        reconciliationAttempts = 0
 
         // 1) Optimistic user turn (text first, then images) + clear the composer.
         var blocks: [ContentBlock] = []
@@ -855,6 +861,7 @@ final class SessionDetailViewModel {
         notice = nil
         isDiscoveringLive = false
         isReconnecting = false
+        recoveryMessage = nil
         reconnectSchedule.reset()
         promptRequestStarted = false
         promptRequestInFlight = false
@@ -972,16 +979,10 @@ final class SessionDetailViewModel {
             snapshot = try? await client.connectionSnapshot(connectionId: conn, as: LiveSessionSnapshot.self)
         }
         guard !Task.isCancelled, promptClientMessageID == clientMessageID else { return }
-        let confirmedRejection: Bool
-        switch error as? APIError {
-        case .unauthorized?, .turnInProgress?: confirmedRejection = true
-        case .server(let status, _, _)?: confirmedRejection = (400..<500).contains(status)
-        default: confirmedRejection = false
-        }
         switch PromptAcceptance.decide(requestStarted: promptRequestStarted,
                                        observedTurnEvent: observedPromptAcceptance,
                                        clientMessageID: clientMessageID, snapshot: snapshot,
-                                       confirmedRejection: confirmedRejection) {
+                                       confirmedRejection: PromptAcceptance.isConfirmedRejection(error)) {
         case .rejected:
             discardOptimisticSend(userTurnID: userTurnID, live: liveTurn ?? live,
                                   restoringDraft: text, restoringAttachments: attachments)
@@ -991,8 +992,9 @@ final class SessionDetailViewModel {
             // Never resend or delete the conversation while acceptance is unknown.
             draftCreatedConversationID = nil
             if isTurnActive {
+                if let message = APIError.userMessage(error) { recoveryMessage = message }
                 reconnectStream(into: liveTurn ?? live, connectionID: connectionID,
-                                reason: Self.describe(error), reattach: liveTurnFromReattach)
+                                reason: APIError.userMessage(error), reattach: liveTurnFromReattach)
             }
         }
     }
@@ -1267,6 +1269,7 @@ final class SessionDetailViewModel {
         reconnectTask = nil
         reconnectSchedule.reset()
         isReconnecting = false
+        recoveryMessage = nil
         isDiscoveringLive = false
         if isTurnActive, case .connecting = sendState { sendState = .thinking }
     }
@@ -1294,8 +1297,7 @@ final class SessionDetailViewModel {
         guard recover else { return }
         if reason == "connection_gone" { connectionID = nil }
         reconnectStream(into: liveTurn, connectionID: connectionID,
-                        reason: reason, reattach: reattach,
-                        immediately: reason?.lowercased() == "network changed")
+                        reason: reason, reattach: reattach)
     }
 
     /// Resolve the pending `openStream` suspension exactly once.
@@ -1320,6 +1322,8 @@ final class SessionDetailViewModel {
         guard let id = conversationID, summary != nil,
               liveTurn == nil, stream == nil, sendPipelineID == nil, !isDiscoveringLive else { return }
         if !serverSaysLive, summary?.status == .completed || summary?.status == .cancelled { return }
+        turnReconciliation = TurnReconciliation(totalTurns: transcriptTotal, turns: turns)
+        reconciliationAttempts = 0
         isDiscoveringLive = true
         seqTracker.adoptSnapshot(nil)
         let generation = streamGeneration
@@ -1349,7 +1353,8 @@ final class SessionDetailViewModel {
             startRecoveryStream(connectionID: conn, live: liveTurn, reattach: true)
         } catch {
             guard !Task.isCancelled, generation == streamGeneration else { return }
-            reconnectStream(into: liveTurn, connectionID: nil, reason: Self.describe(error), reattach: true)
+            if let message = APIError.userMessage(error) { recoveryMessage = message }
+            reconnectStream(into: liveTurn, connectionID: nil, reason: APIError.userMessage(error), reattach: true)
         }
     }
 
@@ -1588,6 +1593,7 @@ final class SessionDetailViewModel {
         isTurnActive = false
         isDiscoveringLive = false
         isReconnecting = false
+        recoveryMessage = nil
         // Read before clearing: this is the one transition that delivers parked
         // plan-revision notes (every other terminal path drops them).
         let planFollowUp = pendingPlanFollowUp
@@ -1617,6 +1623,7 @@ final class SessionDetailViewModel {
         isTurnActive = false
         isDiscoveringLive = false
         isReconnecting = false
+        recoveryMessage = nil
         clearInteractivePrompts()
         closeStream()
         pendingUserTurns.removeAll { $0.id == userTurnID }
@@ -1654,6 +1661,7 @@ final class SessionDetailViewModel {
         isTurnActive = false
         isDiscoveringLive = false
         isReconnecting = false
+        recoveryMessage = nil
         clearInteractivePrompts()
         live.flushAllText()
         live.isStreaming = false
@@ -1691,7 +1699,7 @@ final class SessionDetailViewModel {
         guard isTurnActive || isDiscoveringLive else { closeStream(); return }
         if let live, liveTurn !== live { return }
         closeStream()
-        let delay = reconnectSchedule.next()
+        let delay = reconnectSchedule.next(closeReason: reason)
         let generation = streamGeneration
         isReconnecting = true
         sendState = .connecting
@@ -1708,8 +1716,9 @@ final class SessionDetailViewModel {
                         sessionId: self.summary?.externalId, agentType: self.agentTypeForUI)?.connectionId
                 } catch {
                     guard !Task.isCancelled, generation == self.streamGeneration else { return }
+                    if let message = APIError.userMessage(error) { self.recoveryMessage = message }
                     self.reconnectStream(into: self.liveTurn, connectionID: nil,
-                                         reason: Self.describe(error), reattach: reattach)
+                                         reason: APIError.userMessage(error), reattach: reattach)
                     return
                 }
             }
@@ -1721,6 +1730,7 @@ final class SessionDetailViewModel {
                     // A cold, idle discovery completed successfully: no live session.
                     self.isDiscoveringLive = false
                     self.isReconnecting = false
+                    self.recoveryMessage = nil
                     self.closeStream()
                     await self.reconcileAfterMissedLive()
                 }
@@ -1804,6 +1814,7 @@ final class SessionDetailViewModel {
         } catch {
             // A failed HTTP probe is not evidence the turn stopped. Socket retry
             // continues independently; healthy quiet tools remain on screen.
+            if isReconnecting, let message = APIError.userMessage(error) { recoveryMessage = message }
         }
     }
 
@@ -1827,12 +1838,15 @@ final class SessionDetailViewModel {
            liveTurn === live, isTurnActive {
             summary = detail.summary
             sessionStats = detail.sessionStats ?? sessionStats
-            // Adopt only a transcript that genuinely advanced past our pre-turn
-            // baseline AND ends with a real reply — never a stale read.
-            if detail.totalTurns > transcriptTotal, Self.transcriptHasReply(detail.turns) {
+            let baseline = turnReconciliation ?? TurnReconciliation(totalTurns: transcriptTotal, turns: turns)
+            reconciliationAttempts += 1
+            if baseline.canAdopt(detail, preservingReply: !live.isEmpty,
+                                 streamedReply: live.snapshotAsMessageTurn().blocks,
+                                 retriesExhausted: reconciliationAttempts >= 5) {
                 isTurnActive = false
                 isDiscoveringLive = false
                 isReconnecting = false
+                recoveryMessage = nil
                 clearInteractivePrompts()
                 adoptTranscript(detail)
                 pendingUserTurns.removeAll()
@@ -1950,37 +1964,29 @@ final class SessionDetailViewModel {
         // A new task that never got linked keeps its locally rendered turns.
         guard let id = conversationID else { return }
         // Whether the finished live turn has content worth preserving. If it was
-        // empty (e.g. a no-op turn), there's nothing to protect — adopt whatever
-        // the server returns on the first successful fetch.
+        // empty (e.g. a no-op turn), an empty persisted reply can also reconcile.
         let mustPreserveReply = !live.isEmpty
-        // Pre-turn baseline. A fetched transcript is only "ours" once it has grown
-        // past this — otherwise a stale read that still ends with the *previous*
-        // turn's assistant reply would satisfy `transcriptHasReply` and we'd adopt
-        // it, dropping the reply we just streamed. `turns` isn't mutated elsewhere
-        // between finalize and this reconcile.
-        let baselineCount = transcriptTotal
+        let baseline = turnReconciliation ?? TurnReconciliation(totalTurns: transcriptTotal, turns: turns)
 
         for attempt in 0..<5 {
             // If the user started another turn while we were reconciling, that
             // newer turn now owns turns/pendingUserTurns/liveTurn; bail so we
             // don't wipe its in-flight state (its own finalize reconciles later).
-            guard liveTurn === live else { return }
+            guard !Task.isCancelled, liveTurn === live else { return }
             do {
                 let detail = try await fetchWindowedDetail(id: id)
                 // Re-check after the await — a new turn may have begun during it.
-                guard liveTurn === live else { return }
+                guard !Task.isCancelled, liveTurn === live else { return }
                 // Identity/stats are always safe to adopt, even before the reply
                 // is queryable, so the header stays fresh while we wait.
                 summary = detail.summary
                 sessionStats = detail.sessionStats ?? sessionStats
 
-                // Adopt only once the transcript has genuinely advanced for THIS
-                // turn: it must have grown past the baseline (so a stale read that
-                // merely ends with an older reply can't masquerade as ours) and —
-                // when there's a streamed reply to protect — end with a non-empty
-                // assistant turn.
-                let advanced = detail.totalTurns > baselineCount
-                if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
+                // An idle updated assistant row is sufficient even if totalTurns
+                // is unchanged. Retry unchanged reads before the bounded fallback.
+                if baseline.canAdopt(detail, preservingReply: mustPreserveReply,
+                                     streamedReply: live.snapshotAsMessageTurn().blocks,
+                                     retriesExhausted: attempt == 4) {
                     adoptTranscript(detail)
                     pendingUserTurns.removeAll()
                     liveTurn = nil
@@ -1995,7 +2001,7 @@ final class SessionDetailViewModel {
             }
             // Don't sleep after the final attempt.
             if attempt < 4 {
-                try? await Task.sleep(for: .milliseconds(500))
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             }
         }
         // Gave up reconciling (the server hasn't persisted the reply within the
@@ -2031,23 +2037,6 @@ final class SessionDetailViewModel {
         requestScrollToBottom()
     }
 
-    /// True when the latest persisted turn is an assistant reply that actually
-    /// carries renderable content — the signal that the server has committed the
-    /// reply we just streamed (vs. only the user turn, or an empty placeholder).
-    private static func transcriptHasReply(_ turns: [MessageTurn]) -> Bool {
-        guard let last = turns.last, last.role == .assistant else { return false }
-        return last.blocks.contains { block in
-            switch block {
-            case .text(let t), .thinking(let t):
-                return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .image, .toolUse, .toolResult, .unknown:
-                return true
-            case .imageGeneration(let prompt, let image):
-                return image != nil || !(prompt ?? "").isEmpty
-            }
-        }
-    }
-
     // MARK: - Cancel
 
     func cancel() {
@@ -2056,6 +2045,7 @@ final class SessionDetailViewModel {
         isTurnActive = false
         isDiscoveringLive = false
         isReconnecting = false
+        recoveryMessage = nil
         sendPipelineID = nil
         promptClientMessageID = nil
         promptRequestInFlight = false

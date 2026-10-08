@@ -27,7 +27,7 @@ final class SessionFactory: @unchecked Sendable {
                 config.timeoutIntervalForRequest = 604_800
                 config.timeoutIntervalForResource = 604_800
             }
-            config.waitsForConnectivity = true
+            config.waitsForConnectivity = self != .stream
             return config
         }
     }

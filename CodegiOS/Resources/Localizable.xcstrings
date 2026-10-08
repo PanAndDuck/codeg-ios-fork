@@ -1,6 +1,23 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The server certificate is untrusted or does not match the saved pin. Verify it in Edit Server. SHA-256: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The server certificate is untrusted or does not match the saved pin. Verify it in Edit Server. SHA-256: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器证书不受信任或与已保存的指纹不匹配。请在“编辑服务器”中核对。SHA-256：%@"
+          }
+        }
+      }
+    },
     "Reconnecting… (%lld)" : {
       "localizations" : {
         "zh-Hans" : {

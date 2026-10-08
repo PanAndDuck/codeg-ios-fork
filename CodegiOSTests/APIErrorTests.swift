@@ -139,6 +139,7 @@ final class APIErrorTests: XCTestCase {
 
     private static let allCases: [(APIError, Bool)] = [
         (.invalidURL, false), (.unauthorized, false), (.turnInProgress, false), (.cancelled, false),
+        (.untrustedCertificate(fingerprint: String(repeating: "ab", count: 32)), false),
         (.timedOut("timeout"), true), (.offline("offline"), true), (.connectionLost("lost"), true),
         (.serverUnreachable("host"), true), (.tls("TLS"), false), (.relayAgentOffline("offline"), true),
         (.relayStreamFailed("stream"), true), (.tooManyAuthFailures(retryAfterSeconds: 42, detail: "ban"), false),

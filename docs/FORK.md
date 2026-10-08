@@ -116,12 +116,18 @@ the server's agent resume to take up to 60s. Agent option probes and repository
 clones already use this session; installs use 120s / 900s. Normal reads keep
 their existing 15s / 60s or 30s / 120s limits.
 
-All sessions retain `waitsForConnectivity`. An exact “Waiting for network…”
-indicator needs `URLSessionTaskDelegate`'s waiting callback; it is deferred to
-the session-factory/TLS work rather than adding another delegate here. TLS
-pinning can add `APIError.untrustedCertificate(fingerprint:)` beside `.tls`;
-`fromTransport(_:)` preserves typed errors and `isTransient` defaults to false
-for new cases.
+HTTP sessions retain `waitsForConnectivity`; profile-specific WebSocket sessions
+fail fast so the recovery owner can retry. An exact “Waiting for network…”
+indicator remains deferred. TLS pinning reports
+`APIError.untrustedCertificate(fingerprint:)` before general transport mapping;
+the fingerprint error is non-transient and localized in English and Chinese.
+
+Active turns keep retrying after a socket closes, including keepalive timeouts.
+`EventStream.CloseReason.networkChanged` skips backoff immediately. Recovery
+shows typed HTTP failure messages alongside the retry status, including relay
+offline responses from discovery or the quiet-turn snapshot probe. Cancellation
+does not produce an error message. Explicit HTTP 413/429 prompt rejections
+restore the draft instead of entering ambiguous-acceptance recovery.
 
 The error tests use an in-process `URLProtocol` fixture, never a running codeg
 server. For parallel tasks, select a dedicated simulator with
@@ -142,6 +148,16 @@ require the same offset and prefix hash. A mismatch refetches the tail.
 Servers without window metadata are treated as returning complete history.
 Folder lookup runs independently, so a slow or failed folder list cannot
 prevent the transcript from appearing.
+
+Reconciliation captures the global turn count and last assistant identity/content
+before send or reattach. An idle response with no `in_flight_user_turn_id` can
+replace the live reply when the count grows or that assistant row changes, even
+at the same count. Unchanged reads retry; after five reads an idle persisted
+reply is adopted only if it matches the streamed blocks or no live content needs
+preserving. Otherwise the local reply is retained. A running response or empty
+assistant placeholder never replaces a nonempty streamed reply. Both post-turn
+refresh and missing-connection recovery use the same decision and keep the
+window continuity checks.
 
 `ConversationWindowTests`, `SessionWindowLoadTests`, and `TranscriptPagingTests`
 cover the wire contract, merge/reset behavior, request sequence, transient

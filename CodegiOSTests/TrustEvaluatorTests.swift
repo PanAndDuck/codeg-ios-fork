@@ -57,4 +57,15 @@ final class TrustEvaluatorTests: XCTestCase {
         XCTAssertFalse(evaluator.allowsRedirect(to: URL(string: "https://other.test:18443")!))
         XCTAssertFalse(evaluator.allowsRedirect(to: URL(string: "https://example.test:18444")!))
     }
+
+    func testProfileStreamFailsFastWhileHTTPStillWaitsForConnectivity() {
+        let factory = SessionFactory()
+        let profile = ServerProfile(name: "Relay", urlString: "https://example.test:18443", pinnedCertSHA256: pin)
+        let sessions = factory.sessions(for: profile)
+        let client = CodegClient(baseURL: profile.baseURL!, token: "test-only", sessions: sessions)
+        XCTAssertFalse(client.streamSession.configuration.waitsForConnectivity)
+        XCTAssertEqual(client.streamSession.configuration.timeoutIntervalForResource, 604_800)
+        XCTAssertTrue(client.probeSession.configuration.waitsForConnectivity)
+        XCTAssertEqual(client.probeSession.configuration.timeoutIntervalForRequest, 90)
+    }
 }

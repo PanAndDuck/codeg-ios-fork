@@ -73,6 +73,30 @@ final class StreamRecoveryTests: XCTestCase {
         }
     }
 
+    func testNetworkChangeSkipsBackoffButKeepaliveTimeoutStillRetries() {
+        var schedule = ReconnectSchedule()
+        for _ in 0..<7 { _ = schedule.next(unitRandom: 0.5) }
+        XCTAssertEqual(schedule.next(closeReason: EventStream.CloseReason.networkChanged, unitRandom: 0.5), 0)
+        XCTAssertEqual(schedule.next(closeReason: EventStream.CloseReason.keepaliveTimeout, unitRandom: 0.5), 30)
+        XCTAssertEqual(schedule.attempt, 9)
+    }
+
+    func testTypedHTTPRejectionsCannotBecomeAmbiguousPromptAcceptance() throws {
+        let prompting = try snapshot("\"status\":\"prompting\"")
+        for error in [APIError.payloadTooLarge("limit"), .tooManyAuthFailures(retryAfterSeconds: 30, detail: "limited"),
+                      .relayTooManyConnections("limited"), .unauthorized, .turnInProgress,
+                      .server(status: 422, code: nil, message: "invalid")] {
+            XCTAssertEqual(PromptAcceptance.decide(requestStarted: true, observedTurnEvent: false,
+                clientMessageID: "mine", snapshot: prompting,
+                confirmedRejection: PromptAcceptance.isConfirmedRejection(error)), .rejected)
+        }
+        for error in [APIError.timedOut("timeout"), .relayAgentOffline("offline"), .connectionLost("lost")] {
+            XCTAssertEqual(PromptAcceptance.decide(requestStarted: true, observedTurnEvent: false,
+                clientMessageID: "mine", snapshot: nil,
+                confirmedRejection: PromptAcceptance.isConfirmedRejection(error)), .unknown)
+        }
+    }
+
     func testPromptAcceptanceUsesEvidenceAndNeverTreatsIdleAsRejection() throws {
         let idle = try snapshot("\"status\":\"connected\"")
         let prompting = try snapshot("\"status\":\"prompting\"")
