@@ -1,6 +1,193 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Paste pairing code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste pairing code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "粘贴配对码"
+          }
+        }
+      }
+    },
+    "Pairing code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对码"
+          }
+        }
+      }
+    },
+    "Paste from Clipboard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste from Clipboard"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从剪贴板粘贴"
+          }
+        }
+      }
+    },
+    "Import pairing code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import pairing code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入配对码"
+          }
+        }
+      }
+    },
+    "Paste or type the pairing code from codeg. Server URLs and legacy pairing codes are also supported." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste or type the pairing code from codeg. Server URLs and legacy pairing codes are also supported."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "粘贴或输入 codeg 的配对码，也支持服务器 URL 和旧版配对码。"
+          }
+        }
+      }
+    },
+    "No text was pasted. Allow paste access or enter the pairing code manually." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No text was pasted. Allow paste access or enter the pairing code manually."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未粘贴任何文本。请允许粘贴访问，或手动输入配对码。"
+          }
+        }
+      }
+    },
+    "That pairing code is not a valid codeg server address or pairing payload." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That pairing code is not a valid codeg server address or pairing payload."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该配对码不是有效的 codeg 服务器地址或配对信息。"
+          }
+        }
+      }
+    },
+    "Unsupported pairing code version. Expected version 1." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unsupported pairing code version. Expected version 1."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持此配对码版本，请使用版本 1。"
+          }
+        }
+      }
+    },
+    "Invalid pairing mode. Expected relay or direct." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid pairing mode. Expected relay or direct."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对模式无效，请使用 relay 或 direct。"
+          }
+        }
+      }
+    },
+    "A certificate fingerprint requires an HTTPS server URL." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A certificate fingerprint requires an HTTPS server URL."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含证书指纹时，服务器 URL 必须使用 HTTPS。"
+          }
+        }
+      }
+    },
+    "Invalid certificate fingerprint. Expected SHA-256: 64 hexadecimal characters, optionally separated by colons or spaces." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid certificate fingerprint. Expected SHA-256: 64 hexadecimal characters, optionally separated by colons or spaces."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "证书指纹无效。SHA-256 指纹必须包含 64 个十六进制字符，可用冒号或空格分隔。"
+          }
+        }
+      }
+    },
     "Primary endpoint type" : {
       "extractionState" : "manual",
       "localizations" : {

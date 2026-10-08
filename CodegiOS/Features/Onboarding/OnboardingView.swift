@@ -1,14 +1,19 @@
 import SwiftUI
 
 /// First-launch screen shown while no server is saved: the value proposition
-/// plus a single call to action that opens the (reused) server editor. Replaces
+/// plus manual and pairing-code entries into the reused server editor. Replaces
 /// landing on an empty server list.
 struct OnboardingView: View {
     let store: ServerStore
     /// Called after the first server is saved, so the caller can select it.
     let onComplete: (ServerProfile) -> Void
 
-    @State private var showEditor = false
+    @State private var editorEntry: EditorEntry?
+
+    private enum EditorEntry: String, Identifiable {
+        case manual, pairing
+        var id: String { rawValue }
+    }
 
     var body: some View {
         ZStack {
@@ -46,8 +51,15 @@ struct OnboardingView: View {
                 Spacer()
 
                 PrimaryGlassButton(title: "Add Your Server", systemImage: "plus") {
-                    showEditor = true
+                    editorEntry = .manual
                 }
+                Button {
+                    editorEntry = .pairing
+                } label: {
+                    Label("Paste pairing code", systemImage: "doc.on.clipboard")
+                }
+                .tint(Theme.accent)
+                .padding(.top, 14)
                 Text("Codeg connects to a codeg server you run — usually on your dev machine.")
                     .font(.caption)
                     .foregroundStyle(Theme.textTertiary)
@@ -58,8 +70,8 @@ struct OnboardingView: View {
             .padding(.horizontal, 28)
             .padding(.bottom, 28)
         }
-        .sheet(isPresented: $showEditor) {
-            ServerEditorSheet(store: store) { profile in
+        .sheet(item: $editorEntry) { entry in
+            ServerEditorSheet(store: store, startWithPairingCode: entry == .pairing) { profile in
                 onComplete(profile)
             }
         }
