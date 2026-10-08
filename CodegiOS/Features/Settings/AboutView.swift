@@ -46,6 +46,13 @@ struct AboutView: View {
     private var build: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
     }
+    private var appName: String {
+        guard Bundle.main.object(forInfoDictionaryKey: "CodegFlavor") as? String == "fork" else {
+            return "Codeg"
+        }
+        let commit = Bundle.main.object(forInfoDictionaryKey: "CodegBuildCommit") as? String ?? ""
+        return commit.isEmpty ? "Codeg-Fork" : "Codeg-Fork · \(commit)"
+    }
 
     var body: some View {
         ZStack {
@@ -80,7 +87,7 @@ struct AboutView: View {
                         in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                     )
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Codeg")
+                    Text(appName)
                         .font(.title2.weight(.bold))
                         .foregroundStyle(Theme.textPrimary)
                     Text("codeg agent client for iOS")

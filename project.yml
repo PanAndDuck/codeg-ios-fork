@@ -24,6 +24,12 @@ packages:
 
 settings:
   base:
+    # Official defaults. scripts/build-fork.sh supplies all fork overrides.
+    CODEG_DISPLAY_NAME: Codeg
+    CODEG_BUNDLE_ID: app.codeg.ios
+    CODEG_URL_SCHEME: codeg
+    CODEG_FLAVOR: official
+    CODEG_BUILD_COMMIT: ""
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     # Device installs require a team supplied by Config/Signing.local.xcconfig
@@ -44,7 +50,7 @@ targets:
       - package: SwiftTerm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.codeg.ios
+        PRODUCT_BUNDLE_IDENTIFIER: "$(CODEG_BUNDLE_ID)"
         PRODUCT_NAME: Codeg
         MARKETING_VERSION: "1.0.1"
         CURRENT_PROJECT_VERSION: "2"
@@ -56,7 +62,9 @@ targets:
     info:
       path: CodegiOS/Info.plist
       properties:
-        CFBundleDisplayName: Codeg
+        CFBundleDisplayName: "$(CODEG_DISPLAY_NAME)"
+        CodegFlavor: "$(CODEG_FLAVOR)"
+        CodegBuildCommit: "$(CODEG_BUILD_COMMIT)"
         # Version is single-sourced from the MARKETING_VERSION / CURRENT_PROJECT_VERSION
         # build settings above so `scripts/release.sh` only has to bump those two lines.
         # These MUST stay as $(...) references, not literals — a literal here overrides
@@ -71,9 +79,9 @@ targets:
           - en
           - zh-Hans
         CFBundleURLTypes:
-          - CFBundleURLName: app.codeg.ios
+          - CFBundleURLName: "$(CODEG_BUNDLE_ID)"
             CFBundleURLSchemes:
-              - codeg
+              - "$(CODEG_URL_SCHEME)"
         UILaunchScreen: {}
         UIUserInterfaceStyleSupportsDark: true
         UIApplicationSceneManifest:
@@ -92,3 +100,26 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  CodegiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: CodegiOSTests
+    dependencies:
+      - target: CodegiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(CODEG_BUNDLE_ID).tests"
+        GENERATE_INFOPLIST_FILE: "YES"
+        # XcodeGen otherwise uses the target name instead of PRODUCT_NAME.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Codeg.app/Codeg"
+
+schemes:
+  CodegiOS:
+    build:
+      targets:
+        CodegiOS: all
+    test:
+      targets:
+        - CodegiOSTests

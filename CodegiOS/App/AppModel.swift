@@ -110,12 +110,12 @@ final class AppModel {
         paths[tab] = path
     }
 
-    /// Handle a `codeg://` URL. `codeg://tab/<name>` switches tabs;
+    /// Handle the registered OS scheme or a `codeg://` content URL. `…://tab/<name>` switches tabs;
     /// `codeg://conversation/<id>` / `codeg://project/<id>` land on the owning
     /// tab with a fresh, predictable stack (so Back always returns to that
     /// tab's root, not to wherever the user happened to be).
     func handle(url: URL) {
-        guard url.scheme?.lowercased() == "codeg" else { return }
+        guard Route.accepts(url: url) else { return }
         if url.host?.lowercased() == "tab",
            url.pathComponents.count > 1,
            let tab = AppTab(rawValue: url.pathComponents[1].lowercased()) {
