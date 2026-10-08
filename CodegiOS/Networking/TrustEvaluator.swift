@@ -12,6 +12,10 @@ final class TrustEvaluator: NSObject, URLSessionDelegate, URLSessionTaskDelegate
     let pin: String?
     private let lock = NSLock()
     private var rejectedFingerprint: String?
+    private var bodyBytes: Int64 = 0
+
+    var sentBodyBytes: Int64 { lock.withLock { bodyBytes } }
+    func recordSentBodyBytes(_ bytes: Int64) { lock.withLock { bodyBytes = max(bodyBytes, bytes) } }
 
     init(baseURL: URL, pin: String?) {
         self.baseURL = baseURL
@@ -23,6 +27,10 @@ final class TrustEvaluator: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         lock.lock()
         defer { lock.unlock() }
         return rejectedFingerprint
+    }
+
+    func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
+        FailoverDiagnostics.record("http waiting-for-connectivity path=\(task.originalRequest?.url?.lastPathComponent ?? "unknown") port=\(baseURL.port ?? 0)")
     }
 
     static func decision(pin: String?, presented: String?, systemTrusted: Bool) -> Decision {

@@ -116,9 +116,15 @@ the server's agent resume to take up to 60s. Agent option probes and repository
 clones already use this session; installs use 120s / 900s. Normal reads keep
 their existing 15s / 60s or 30s / 120s limits.
 
-HTTP sessions retain `waitsForConnectivity`; profile-specific WebSocket sessions
-fail fast so the recovery owner can retry. An exact “Waiting for network…”
-indicator remains deferred. TLS pinning reports
+Single-endpoint HTTP sessions retain `waitsForConnectivity` for ordinary/long
+operations. Health/status/editor checks use a separate 5s request/resource
+budget with `waitsForConnectivity = false`, so an unreachable server cannot
+leave its status spinner waiting silently for 60s. Dual-endpoint sessions
+disable connectivity waiting for every kind. Their initial connection budget
+is 1.5s for LAN and 5s for Relay; once HTTP body bytes have been sent, the
+original response/operation budgets above apply. WebSocket connection budgets
+end at `__ready__`; established sockets retain their seven-day session limits
+and the existing heartbeat/attach watchdogs. TLS pinning reports
 `APIError.untrustedCertificate(fingerprint:)` before general transport mapping;
 the fingerprint error is non-transient and localized in English and Chinese.
 
@@ -252,11 +258,27 @@ is changed before that choice; Save persists the draft. Both endpoints must
 represent the same codeg server and share its token/custom headers.
 
 `EndpointSelector` is a pure policy core. On startup, an I1 meaningful network
-change (regained connectivity or active interface change), or two consecutive
-transport/server failures, `ServerStore` concurrently probes `POST /api/health`
+change (regained connectivity or active interface change), the first connectivity
+failure, or two consecutive other transport/server failures, `ServerStore`
+concurrently probes `POST /api/health`
 on both candidates. LAN has a 1.5s total/request budget; Relay has 5s. Probe
 sessions do not wait for connectivity. HTTP and WebSocket failure streaks are
 separate so a successful HTTP touch cannot mask failed socket upgrades.
+
+Connectivity failures include `cannotConnectToHost`, `cannotFindHost`,
+`dnsLookupFailed`, `timedOut`, `networkConnectionLost`, and
+`notConnectedToInternet`. Concurrent failures join one selection. A failure
+prefers the healthy alternative even if the failing endpoint's health probe
+has recovered; a cached Wi-Fi preference cannot send the retry back to the
+same failed endpoint. The request awaits selection and transparently retries
+once on the selected alternative. Reads may retry after sending; mutations
+only retry when no request-body bytes were sent. Already-sent mutations keep
+their existing reconciliation/ambiguity handling, preventing duplicate prompts
+or agent processes. Caller cancellation and TLS errors never trigger this
+retry. Old requests canceled by that specific failover can join it; stale
+responses, edits, deletions, and unrelated generation changes cannot authorize
+a replay. Initial event-stream attach retries once after `endpoint changed`
+before allowing a prompt to be sent.
 
 Healthy primary wins on Wi-Fi. Otherwise healthy secondary wins; primary is
 the fallback if it is the only healthy endpoint. When neither is healthy, the
@@ -273,8 +295,8 @@ tasks. HTTP task creation is serialized with session invalidation, and removed
 server handles reject new requests/sockets. Temporary editor clients do not
 invalidate sessions still owned by the editor cache. I2 consumes `.closed` and immediately reconnects with the existing live
 turn/cursor. Terminal reconnect keeps the server PTY. In-flight old HTTP
-results become `connectionLost`; mutating commands are never automatically
-replayed by failover (I2 retains its ambiguous-prompt handling). Terminal
+successful results become `connectionLost`; already-sent mutating commands
+are never automatically replayed (I2 retains its ambiguous-prompt handling). Terminal
 output produced during disconnection still has no replay, as before.
 
 Metadata stays at `codeg.servers.v1`. New optional fields decode safely when
@@ -296,7 +318,8 @@ scripts/test-pinning.sh
 ```
 
 This generates an ephemeral certificate under `build/fork`, starts a Python
-TLS fixture on **127.0.0.1:18455**, and runs the fork Simulator tests. The EXIT
+TLS fixture on **127.0.0.1:18455** (override with `FORK_TLS_TEST_PORT`), and runs
+the fork Simulator tests. The EXIT
 trap stops only its recorded Python process and removes the certificate, key,
 fixture resource and temporary data directories. Integration cases skip when
 the generated fixture resource is absent. No codeg server or physical device

@@ -80,6 +80,46 @@ final class PinningIntegrationTests: XCTestCase {
         guard case .closed = frame else { return XCTFail("Mismatched WSS certificate accepted") }
     }
 
+    func testConnectionBudgetDoesNotCancelAnAlreadySentSlowOperation() async throws {
+        let fixture = try fixture()
+        let url = fixture.url.appendingPathComponent("slow")
+        let sessions = SessionFactory.Sessions(baseURL: url, pin: fixture.fingerprint, connectionTimeout: 0.3)
+        let client = CodegClient(baseURL: url, token: "test-only", sessions: sessions)
+        let start = ProcessInfo.processInfo.systemUptime
+        let response: HealthResponse = try await client.postJSON("health", EmptyBody(), kind: .probe)
+        XCTAssertEqual(response.status, "ok")
+        XCTAssertGreaterThan(ProcessInfo.processInfo.systemUptime - start, 1.5)
+    }
+
+    @MainActor
+    func testFirstFailedWebSocketUpgradeSelectsRelayBeforeClosing() async throws {
+        let fixture = try fixture()
+        let suite = "F3-ws-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ServerStore(defaults: defaults)
+        let profile = try XCTUnwrap(store.add(name: "F3", urlString: fixture.url.appendingPathComponent("stall").absoluteString,
+            token: "test-only", pinnedCertSHA256: fixture.fingerprint,
+            secondaryEndpoint: .init(urlString: fixture.url.absoluteString, pinnedCertSHA256: fixture.fingerprint)))
+        defer { store.delete(profile) }
+        let client = try XCTUnwrap(store.client(for: profile))
+        store.networkDidChange(old: nil, new: .init(status: .satisfied, primaryInterface: .wifi))
+        await store.prepareEndpoint(for: profile)
+        XCTAssertEqual(store.endpointLabel(for: profile), "LAN")
+        let start = ProcessInfo.processInfo.systemUptime
+        let stream = client.makeEventStream()
+        defer { stream.close() }
+        stream.start()
+        guard case .closed(let reason) = try await firstFrame(from: stream.frames) else { return XCTFail("Expected failover") }
+        XCTAssertEqual(reason, EventStream.CloseReason.endpointChanged)
+        XCTAssertEqual(store.endpointLabel(for: profile), "Relay")
+        let replacement = client.makeEventStream()
+        defer { replacement.close() }
+        replacement.start()
+        guard case .ready = try await firstFrame(from: replacement.frames) else { return XCTFail("Relay upgrade failed") }
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 5)
+    }
+
     func testPinnedEventAndTerminalWebSocketsReceiveReady() async throws {
         let fixture = try fixture()
         let sessions = SessionFactory.Sessions(baseURL: fixture.url, pin: fixture.fingerprint)

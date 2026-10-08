@@ -12,7 +12,7 @@ final class E1bDriver: XCTestCase {
         }
         let config = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: String]
         let base = try XCTUnwrap(config["url"])
-        let app = XCUIApplication(bundleIdentifier: "app.codeg.ios.fork.yourname")
+        let app = XCUIApplication(bundleIdentifier: config["bundleID"] ?? "app.codeg.ios.fork.yourname")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         let session = URLSession(configuration: .ephemeral)
@@ -42,6 +42,17 @@ final class E1bDriver: XCTestCase {
             switch action {
             case "tap":
                 if element.exists { element.tap() } else { result["error"] = "element missing" }
+            case "tapAndWait":
+                if element.exists {
+                    let start = Date().timeIntervalSince1970
+                    element.tap()
+                    let visible = app.staticTexts[command["waitFor"] as? String ?? ""].firstMatch
+                        .waitForExistence(timeout: command["timeout"] as? Double ?? 5)
+                    result["tapStartedUnix"] = start
+                    result["visibleUnix"] = Date().timeIntervalSince1970
+                    result["elapsedSeconds"] = Date().timeIntervalSince1970 - start
+                    result["visible"] = visible
+                } else { result["error"] = "element missing" }
             case "longPress":
                 if element.exists { element.press(forDuration: 1.1) } else { result["error"] = "element missing" }
             case "type":
