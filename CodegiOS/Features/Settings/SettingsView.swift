@@ -44,7 +44,7 @@ struct SettingsView: View {
         .navigationDestination(for: SettingsLeaf.self) { leaf in
             leaf.destination(store: store, selectedServerID: selectedServerID)
         }
-        .task(id: selectedServerID) {
+        .task(id: selectedServer?.connectionIdentity) {
             await versionModel.load(selectedServer.flatMap { store.client(for: $0) })
         }
     }

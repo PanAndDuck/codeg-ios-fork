@@ -10,6 +10,7 @@ final class ServerStore {
     private(set) var servers: [ServerProfile]
 
     private let defaults: UserDefaults
+    private let sessionFactory = SessionFactory()
     private let storageKey = "codeg.servers.v1"
 
     init(defaults: UserDefaults = .standard) {
@@ -23,8 +24,10 @@ final class ServerStore {
     /// could not be persisted securely — in which case nothing is added, so the
     /// list never holds a server whose token silently failed to save.
     @discardableResult
-    func add(name: String, urlString: String, token: String) -> ServerProfile? {
-        let profile = ServerProfile(name: name, urlString: urlString)
+    func add(name: String, urlString: String, token: String,
+             pinnedCertSHA256: String? = nil, pairingMode: String? = nil) -> ServerProfile? {
+        let profile = ServerProfile(name: name, urlString: urlString,
+                                    pinnedCertSHA256: pinnedCertSHA256, pairingMode: pairingMode)
         guard Keychain.setToken(token, for: profile.id) else { return nil }
         servers.append(profile)
         persist()
@@ -45,12 +48,16 @@ final class ServerStore {
             // Store the new secret first; abort the whole update if it fails.
             guard Keychain.setToken(token, for: profile.id) else { return false }
         }
+        if servers[index].urlString != profile.urlString || servers[index].pinnedCertSHA256 != profile.pinnedCertSHA256 {
+            sessionFactory.invalidate(profile.id)
+        }
         servers[index] = profile
         persist()
         return true
     }
 
     func delete(_ profile: ServerProfile) {
+        sessionFactory.invalidate(profile.id)
         servers.removeAll { $0.id == profile.id }
         Keychain.deleteToken(for: profile.id)
         persist()
@@ -58,6 +65,7 @@ final class ServerStore {
 
     func delete(at offsets: IndexSet) {
         for index in offsets {
+            sessionFactory.invalidate(servers[index].id)
             Keychain.deleteToken(for: servers[index].id)
         }
         servers.remove(atOffsets: offsets)
@@ -78,7 +86,7 @@ final class ServerStore {
     /// Build an HTTP client for a profile, or nil if the URL/token is missing.
     func client(for profile: ServerProfile) -> CodegClient? {
         guard let baseURL = profile.baseURL, let token = token(for: profile) else { return nil }
-        return CodegClient(baseURL: baseURL, token: token)
+        return CodegClient(baseURL: baseURL, token: token, sessions: sessionFactory.sessions(for: profile))
     }
 
     // MARK: - Persistence

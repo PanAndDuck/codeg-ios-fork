@@ -950,7 +950,7 @@ final class SessionDetailViewModel {
         streamReconnects = 0   // fresh send → fresh reconnect budget
         streamGeneration &+= 1
         let generation = streamGeneration
-        let newStream = EventStream(baseURL: client.baseURL, token: client.token)
+        let newStream = EventStream(baseURL: client.baseURL, token: client.token, session: client.streamSession)
         stream = newStream
         newStream.start()
 
@@ -1166,7 +1166,7 @@ final class SessionDetailViewModel {
         closeStream()
         streamGeneration &+= 1
         let generation = streamGeneration
-        let newStream = EventStream(baseURL: client.baseURL, token: client.token)
+        let newStream = EventStream(baseURL: client.baseURL, token: client.token, session: client.streamSession)
         stream = newStream
         newStream.start()
         consumerTask = Task { [weak self] in
@@ -1589,7 +1589,7 @@ final class SessionDetailViewModel {
             guard let self, !Task.isCancelled,
                   self.liveTurn === live, self.isTurnActive,
                   generation == self.streamGeneration else { return }
-            let newStream = EventStream(baseURL: self.client.baseURL, token: self.client.token)
+            let newStream = EventStream(baseURL: self.client.baseURL, token: self.client.token, session: self.client.streamSession)
             self.stream = newStream
             newStream.start()
             self.consumerTask = Task { [weak self] in

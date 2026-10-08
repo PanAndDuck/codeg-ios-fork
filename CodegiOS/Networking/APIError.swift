@@ -3,6 +3,7 @@ import Foundation
 /// Typed errors surfaced by `CodegClient`.
 enum APIError: LocalizedError, Sendable {
     case invalidURL
+    case untrustedCertificate(fingerprint: String)
     case unauthorized
     case turnInProgress
     case server(status: Int, code: String?, message: String)
@@ -17,6 +18,8 @@ enum APIError: LocalizedError, Sendable {
         switch self {
         case .invalidURL:
             return "The server address is not a valid URL."
+        case .untrustedCertificate(let fingerprint):
+            return "The server certificate is untrusted or does not match the saved pin. Verify it in Edit Server. SHA-256: \(CertificateFingerprint.display(fingerprint))"
         case .unauthorized:
             return "Authentication failed. Check the server token."
         case .turnInProgress:
