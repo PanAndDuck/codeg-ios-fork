@@ -75,6 +75,11 @@ enum WSServerMessage: Decodable, Sendable {
 /// `.event` frames → `close()`. Reconnection is the caller's responsibility
 /// (Phase 1 reconnects by creating a fresh stream).
 final class EventStream: @unchecked Sendable {
+    enum CloseReason {
+        static let keepaliveTimeout = "keepalive timeout"
+        static let networkChanged = "network changed"
+    }
+
     enum Frame: Sendable {
         case ready
         case snapshot(LiveSessionSnapshot)
@@ -92,6 +97,7 @@ final class EventStream: @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
+    private var healthMonitor: WebSocketHealthMonitor?
     private var isClosed = false
 
     /// Dedicated session for the long-lived event socket. `URLSession.shared`'s
@@ -111,11 +117,6 @@ final class EventStream: @unchecked Sendable {
         return URLSession(configuration: cfg)
     }()
 
-    /// Seconds between keepalive pings. With the idle timeout disabled, these are
-    /// how a genuinely dead connection is detected: the pong handler errors when
-    /// the socket is gone, and we surface that as a `.closed` frame.
-    private static let pingInterval: TimeInterval = 20
-
     init(baseURL: URL, token: String, session: URLSession = EventStream.streamSession) {
         self.token = token
         self.session = session
@@ -126,13 +127,18 @@ final class EventStream: @unchecked Sendable {
     }
 
     func start() {
+        lock.lock()
+        guard !isClosed, task == nil else { lock.unlock(); return }
         let newTask = Self.makeWebSocketTask(session: session, url: url, token: token)
-        lock.lock(); task = newTask; lock.unlock()
+        let monitor = WebSocketHealthMonitor(task: newTask) { [weak self] reason in
+            self?.finish(reason: reason)
+        }
+        task = newTask
+        healthMonitor = monitor
         newTask.resume()
+        monitor.start()
+        lock.unlock()
         receiveLoop()
-        // Begin the keepalive after one interval so the handshake completes first
-        // (a ping fired before the socket connects would error and falsely close).
-        scheduleNextPing()
     }
 
     func attach(subscriptionId: String, connectionId: String, sinceSeq: UInt64? = nil) {
@@ -141,36 +147,31 @@ final class EventStream: @unchecked Sendable {
 
     func detach(subscriptionId: String) { send(.detach(subscriptionId: subscriptionId)) }
 
-    func ping() { send(.ping) }
+    /// Use only protocol ping: application-level ping can deadlock older servers.
+    func ping() { lock.withLock { healthMonitor }?.sendPing() }
 
-    func close() {
-        lock.lock()
-        let alreadyClosed = isClosed
-        isClosed = true
-        let t = task
-        lock.unlock()
-        guard !alreadyClosed else { return }
-        t?.cancel(with: .goingAway, reason: nil)
-        continuation.finish()
-    }
+    func close() { shutdown(reason: nil, notify: false) }
+
+    deinit { close() }
 
     // MARK: - Private
 
     private func send(_ message: WSClientMessage) {
         guard let data = try? CodegJSON.encoder.encode(message),
               let text = String(data: data, encoding: .utf8) else { return }
-        lock.lock(); let t = task; lock.unlock()
+        let t = lock.withLock { isClosed ? nil : task }
         t?.send(.string(text)) { _ in }
     }
 
     private func receiveLoop() {
-        lock.lock(); let t = task; lock.unlock()
+        let t = lock.withLock { isClosed ? nil : task }
         t?.receive { [weak self] result in
             guard let self else { return }
             switch result {
             case .failure(let error):
                 self.finish(reason: error.localizedDescription)
             case .success(let message):
+                self.lock.withLock { self.healthMonitor }?.recordMessage()
                 self.handle(message)
                 self.lock.lock(); let closed = self.isClosed; self.lock.unlock()
                 if !closed { self.receiveLoop() }
@@ -179,40 +180,22 @@ final class EventStream: @unchecked Sendable {
     }
 
     private func finish(reason: String?) {
+        shutdown(reason: reason, notify: true)
+    }
+
+    private func shutdown(reason: String?, notify: Bool) {
         lock.lock()
-        let already = isClosed
+        guard !isClosed else { lock.unlock(); return }
         isClosed = true
+        let t = task
+        let monitor = healthMonitor
+        task = nil
+        healthMonitor = nil
         lock.unlock()
-        guard !already else { return }
-        continuation.yield(.closed(reason: reason))
+        monitor?.stop()
+        t?.cancel(with: .goingAway, reason: nil)
+        if notify { continuation.yield(.closed(reason: reason)) }
         continuation.finish()
-    }
-
-    // MARK: - Keepalive
-
-    /// Schedule the next keepalive ping after `pingInterval`, unless closed.
-    private func scheduleNextPing() {
-        lock.lock(); let closed = isClosed; lock.unlock()
-        guard !closed else { return }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + EventStream.pingInterval) { [weak self] in
-            self?.sendKeepalivePing()
-        }
-    }
-
-    /// Send a WebSocket ping and reschedule on success. On failure the socket is
-    /// genuinely gone, so finish the stream. A quiet-but-healthy turn never trips
-    /// this — the server (axum) always returns the pong, resetting the cycle.
-    private func sendKeepalivePing() {
-        lock.lock(); let closed = isClosed; let t = task; lock.unlock()
-        guard !closed, let t else { return }
-        t.sendPing { [weak self] error in
-            guard let self else { return }
-            if let error {
-                self.finish(reason: error.localizedDescription)
-            } else {
-                self.scheduleNextPing()
-            }
-        }
     }
 
     private func handle(_ message: URLSessionWebSocketTask.Message) {

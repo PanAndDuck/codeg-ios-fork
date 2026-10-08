@@ -15,6 +15,8 @@ import Foundation
 /// URL, the no-idle-timeout `streamSession`, and a keepalive ping that detects a
 /// genuinely dead socket).
 final class TerminalSocket: @unchecked Sendable {
+    typealias CloseReason = EventStream.CloseReason
+
     enum Frame: Sendable {
         case ready
         case output(id: String, data: String)
@@ -29,9 +31,9 @@ final class TerminalSocket: @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
+    private var healthMonitor: WebSocketHealthMonitor?
     private var isClosed = false
 
-    private static let pingInterval: TimeInterval = 20
     private static let outputPrefix = "terminal://output/"
     private static let exitPrefix = "terminal://exit/"
 
@@ -45,34 +47,35 @@ final class TerminalSocket: @unchecked Sendable {
     }
 
     func start() {
+        lock.lock()
+        guard !isClosed, task == nil else { lock.unlock(); return }
         let newTask = EventStream.makeWebSocketTask(session: session, url: url, token: token)
-        lock.lock(); task = newTask; lock.unlock()
+        let monitor = WebSocketHealthMonitor(task: newTask) { [weak self] reason in
+            self?.finish(reason: reason)
+        }
+        task = newTask
+        healthMonitor = monitor
         newTask.resume()
+        monitor.start()
+        lock.unlock()
         receiveLoop()
-        scheduleNextPing()
     }
 
-    func close() {
-        lock.lock()
-        let already = isClosed
-        isClosed = true
-        let t = task
-        lock.unlock()
-        guard !already else { return }
-        t?.cancel(with: .goingAway, reason: nil)
-        continuation.finish()
-    }
+    func close() { shutdown(reason: nil, notify: false) }
+
+    deinit { close() }
 
     // MARK: - Receive
 
     private func receiveLoop() {
-        lock.lock(); let t = task; lock.unlock()
+        let t = lock.withLock { isClosed ? nil : task }
         t?.receive { [weak self] result in
             guard let self else { return }
             switch result {
             case .failure(let error):
                 self.finish(reason: error.localizedDescription)
             case .success(let message):
+                self.lock.withLock { self.healthMonitor }?.recordMessage()
                 self.handle(message)
                 self.lock.lock(); let closed = self.isClosed; self.lock.unlock()
                 if !closed { self.receiveLoop() }
@@ -81,12 +84,21 @@ final class TerminalSocket: @unchecked Sendable {
     }
 
     private func finish(reason: String?) {
+        shutdown(reason: reason, notify: true)
+    }
+
+    private func shutdown(reason: String?, notify: Bool) {
         lock.lock()
-        let already = isClosed
+        guard !isClosed else { lock.unlock(); return }
         isClosed = true
+        let t = task
+        let monitor = healthMonitor
+        task = nil
+        healthMonitor = nil
         lock.unlock()
-        guard !already else { return }
-        continuation.yield(.closed(reason: reason))
+        monitor?.stop()
+        t?.cancel(with: .goingAway, reason: nil)
+        if notify { continuation.yield(.closed(reason: reason)) }
         continuation.finish()
     }
 
@@ -113,28 +125,5 @@ final class TerminalSocket: @unchecked Sendable {
             continuation.yield(.exit(id: id))
         }
         // Other legacy channels (folder/conversation upserts, …) are ignored.
-    }
-
-    // MARK: - Keepalive
-
-    private func scheduleNextPing() {
-        lock.lock(); let closed = isClosed; lock.unlock()
-        guard !closed else { return }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.pingInterval) { [weak self] in
-            self?.sendKeepalivePing()
-        }
-    }
-
-    private func sendKeepalivePing() {
-        lock.lock(); let closed = isClosed; let t = task; lock.unlock()
-        guard !closed, let t else { return }
-        t.sendPing { [weak self] error in
-            guard let self else { return }
-            if let error {
-                self.finish(reason: error.localizedDescription)
-            } else {
-                self.scheduleNextPing()
-            }
-        }
     }
 }
