@@ -8,9 +8,8 @@ import UIKit
 /// `UIImagePickerController` can't scan codes. Calls `onScan` once with the
 /// decoded string, then dismisses itself.
 ///
-/// codeg's desktop "show QR" encodes the bare `http://host:port` address (the
-/// token is a separate field), so the decoded string is the server URL — the
-/// caller normalizes/validates it and the user still enters the token.
+/// The caller parses both legacy server URLs and pairing JSON, including the
+/// optional token and certificate fingerprint. Capture stays payload-agnostic.
 struct QRScannerView: View {
     var onScan: (String) -> Void
     @Environment(\.dismiss) private var dismiss

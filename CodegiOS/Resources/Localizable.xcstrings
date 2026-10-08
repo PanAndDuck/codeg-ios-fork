@@ -1,6 +1,106 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Replace certificate pin?": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "替换证书指纹？"
+          }
+        }
+      }
+    },
+    "Replace pin": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "替换指纹"
+          }
+        }
+      }
+    },
+    "Trust this certificate": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "信任此证书"
+          }
+        }
+      }
+    },
+    "The certificate changed. This could be a man-in-the-middle attack or a relay certificate rotation. Verify the new SHA-256 fingerprint through a trusted channel before replacing the pin.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证书已更改。这可能是中间人攻击，也可能是中继更换了证书。请通过可信渠道核对新的 SHA-256 指纹后再替换。"
+          }
+        }
+      }
+    },
+    "Certificate": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证书"
+          }
+        }
+      }
+    },
+    "Pinned SHA-256 fingerprint": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已固定的 SHA-256 指纹"
+          }
+        }
+      }
+    },
+    "The certificate pin is saved with this server when you tap Save.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击“保存”时，证书指纹将与此服务器一同保存。"
+          }
+        }
+      }
+    },
+    "A pinned certificate requires an HTTPS server URL.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定证书指纹需要使用 HTTPS 服务器地址。"
+          }
+        }
+      }
+    },
+    "Certificate changed. Possible man-in-the-middle attack or relay certificate rotation. Verify the fingerprint before replacing the pin.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证书已更改，可能发生了中间人攻击或中继更换了证书。请核对指纹后再替换。"
+          }
+        }
+      }
+    },
+    "This certificate is not trusted by the system. Verify its SHA-256 fingerprint through a trusted channel before trusting it.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统不信任此证书。信任前，请通过可信渠道核对其 SHA-256 指纹。"
+          }
+        }
+      }
+    },
     "Cursor Configuration" : {
       "localizations" : {
         "zh-Hans" : {

@@ -12,7 +12,8 @@ struct ServerEditorSheet: View {
     @State private var model: ServerEditorModel
     @State private var saveError: LocalizedStringKey?
     @State private var showScanner = false
-    @State private var scanError: LocalizedStringKey?
+    @State private var scanError: String?
+    @State private var replacementFingerprint: String?
     @FocusState private var focusedField: Field?
     @Environment(\.dismiss) private var dismiss
 
@@ -44,6 +45,7 @@ struct ServerEditorSheet: View {
                     VStack(spacing: 18) {
                         connectionSection
                         authSection
+                        certificateSection
                         testSection
                     }
                     .padding(.horizontal, 16)
@@ -85,7 +87,24 @@ struct ServerEditorSheet: View {
         )) {
             Button("OK", role: .cancel) { scanError = nil }
         } message: {
-            Text(scanError ?? "")
+            Text(verbatim: scanError ?? "")
+        }
+        .alert("Replace certificate pin?", isPresented: Binding(
+            get: { replacementFingerprint != nil },
+            set: { if !$0 { replacementFingerprint = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { replacementFingerprint = nil }
+            Button("Replace pin", role: .destructive) {
+                // Do not accept a different result if the editor changed while
+                // the confirmation was visible.
+                if case .certificate(let fingerprint, true) = model.testResult,
+                   fingerprint == replacementFingerprint {
+                    trustCertificate(replacingPin: true)
+                }
+                replacementFingerprint = nil
+            }
+        } message: {
+            Text("The certificate changed. This could be a man-in-the-middle attack or a relay certificate rotation. Verify the new SHA-256 fingerprint through a trusted channel before replacing the pin.")
         }
     }
 
@@ -177,12 +196,55 @@ struct ServerEditorSheet: View {
             if let result = model.testResult {
                 TestResultRow(result: result)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                if case .certificate(let fingerprint, let isMismatch) = result {
+                    Text(CertificateFingerprint.display(fingerprint))
+                        .font(.mono(13))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        if isMismatch {
+                            replacementFingerprint = fingerprint
+                        } else {
+                            trustCertificate()
+                        }
+                    } label: {
+                        Text(isMismatch ? LocalizedStringKey("Replace pin") : LocalizedStringKey("Trust this certificate"))
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .animation(.snappy(duration: 0.22), value: model.testResult)
     }
 
+    @ViewBuilder
+    private var certificateSection: some View {
+        if let pin = model.pinnedCertSHA256 {
+            EditorSection(title: "Certificate") {
+                DisclosureGroup("Pinned SHA-256 fingerprint") {
+                    Text(CertificateFingerprint.display(pin))
+                        .font(.mono(13))
+                        .textSelection(.enabled)
+                        .padding(.top, 8)
+                }
+                Text("The certificate pin is saved with this server when you tap Save.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                if model.parsedBaseURL == nil {
+                    Text("A pinned certificate requires an HTTPS server URL.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.danger)
+                }
+            }
+        }
+    }
+
     // MARK: - Actions
+
+    private func trustCertificate(replacingPin: Bool = false) {
+        guard model.trustPresentedCertificate(replacingPin: replacingPin) else { return }
+        Task { await model.testConnection() }
+    }
 
     private func save() {
         guard model.canSave, let saved = saveProfile() else { return }
@@ -190,12 +252,10 @@ struct ServerEditorSheet: View {
         dismiss()
     }
 
-    /// Fill the address from a scanned QR payload, or surface an error if it
-    /// isn't a server address. The token still has to be entered by hand (codeg's
-    /// QR carries only the URL).
+    /// Fill validated pairing fields, including an optional certificate pin.
     private func handleScanned(_ code: String) {
         if !model.applyScanned(code) {
-            scanError = "That QR code isn’t a codeg server address. Make sure you’re scanning the server URL QR from codeg."
+            scanError = model.scanError
         }
     }
 
@@ -211,6 +271,8 @@ struct ServerEditorSheet: View {
             var updated = existing
             updated.name = name
             updated.urlString = urlString
+            updated.pinnedCertSHA256 = model.pinnedCertSHA256
+            updated.pairingMode = model.pairingMode
             // Pass the token only if the user re-entered one; nil keeps the
             // stored secret untouched.
             guard store.update(updated, token: model.tokenForSave) else {
@@ -220,7 +282,8 @@ struct ServerEditorSheet: View {
             return updated
         } else {
             // canSave guarantees a non-empty trimmed token here.
-            guard let profile = store.add(name: name, urlString: urlString, token: model.trimmedToken) else {
+            guard let profile = store.add(name: name, urlString: urlString, token: model.trimmedToken,
+                                          pinnedCertSHA256: model.pinnedCertSHA256, pairingMode: model.pairingMode) else {
                 saveError = tokenSaveFailureMessage
                 return nil
             }
@@ -259,14 +322,14 @@ private struct TestResultRow: View {
     private var symbol: String {
         switch result {
         case .success: "checkmark.circle.fill"
-        case .failure: "exclamationmark.triangle.fill"
+        case .failure, .certificate: "exclamationmark.triangle.fill"
         }
     }
 
     private var tint: Color {
         switch result {
         case .success: Theme.accent
-        case .failure: Theme.danger
+        case .failure, .certificate: Theme.danger
         }
     }
 
@@ -274,6 +337,10 @@ private struct TestResultRow: View {
         switch result {
         case .success(let version): Text("Connected · v\(version)")
         case .failure(let message): Text(verbatim: message)
+        case .certificate(_, let isMismatch):
+            isMismatch
+                ? Text("Certificate changed. Possible man-in-the-middle attack or relay certificate rotation. Verify the fingerprint before replacing the pin.")
+                : Text("This certificate is not trusted by the system. Verify its SHA-256 fingerprint through a trusted channel before trusting it.")
         }
     }
 }
