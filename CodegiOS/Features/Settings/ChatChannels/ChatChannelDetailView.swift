@@ -325,7 +325,7 @@ final class ChatChannelDetailModel {
             await refreshMessages()
             return true
         } catch {
-            actionError = error.localizedDescription
+            actionError = APIError.userMessage(error)
             return false
         }
     }
@@ -354,7 +354,7 @@ final class ChatChannelDetailModel {
             hasToken = false
             toast = "Token removed."
         } catch {
-            actionError = error.localizedDescription
+            actionError = APIError.userMessage(error)
         }
     }
 
@@ -395,7 +395,7 @@ final class ChatChannelDetailModel {
                 channel = updated
                 onChanged()
             } catch {
-                actionError = error.localizedDescription
+                actionError = APIError.userMessage(error)
                 // Reconcile to server truth.
                 if let fresh = try? await client.listChatChannels().first(where: { $0.id == channel.id }) {
                     channel = fresh

@@ -83,8 +83,9 @@ final class ExpertsSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             if experts.isEmpty { phase = .failed(error.localizedDescription) }
-            else { refreshError = error.localizedDescription }
+            else { refreshError = APIError.userMessage(error) }
         }
     }
 }

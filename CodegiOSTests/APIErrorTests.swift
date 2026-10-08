@@ -155,6 +155,43 @@ final class APIErrorTests: XCTestCase {
         XCTAssertEqual(error, .tooManyAuthFailures(retryAfterSeconds: 23, detail: "wait"))
     }
 
+    @MainActor
+    func testSessionNoticeSkipsCancellationButShowsFailures() async {
+        for (code, shouldShow) in [(URLError.cancelled, false), (.timedOut, true)] {
+            let client = makeClient(failure: URLError(code))
+            defer { client.session.invalidateAndCancel() }
+            let model = SessionDetailViewModel(client: client, conversationID: 42)
+            await model.rename(to: "New title")
+            XCTAssertEqual(model.notice != nil, shouldShow)
+        }
+    }
+
+    @MainActor
+    func testCancelledSettingsLoadDoesNotBecomeFailureScreen() async {
+        let client = makeClient(failure: URLError(.cancelled))
+        defer { client.session.invalidateAndCancel() }
+        let model = GeneralSettingsModel(client: client)
+        await model.load()
+        XCTAssertEqual(model.phase, .loading)
+        XCTAssertNil(model.saveError)
+    }
+
+    @MainActor
+    func testAgentSerialSavePreservesCancellationInsteadOfWrappingMessage() async throws {
+        let client = makeClient(failure: URLError(.cancelled))
+        defer { client.session.invalidateAndCancel() }
+        let model = AgentsSettingsModel(client: client)
+        let fixture = #"{"agent_type":"codex","registry_id":"test-agent","name":"Test","description":"","available":true,"enabled":true,"sort_order":0}"#
+        let agent = try CodegJSON.decoder.decode(AcpAgentInfo.self, from: Data(fixture.utf8))
+        do {
+            try await model.update(agent, enabled: true, env: [:], modelProviderId: nil)
+            XCTFail("A cancelled save must not report success")
+        } catch {
+            XCTAssertTrue(APIError.isCancellation(error))
+            XCTAssertNil(APIError.userMessage(error))
+        }
+    }
+
     private func send(failure: Error? = nil, status: Int = 200, body: String = "", retryAfter: String? = nil) async throws -> APIError {
         let client = makeClient(failure: failure, status: status, body: body, retryAfter: retryAfter)
         defer { client.session.invalidateAndCancel() }

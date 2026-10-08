@@ -47,8 +47,9 @@ final class ChatChannelsSettingsModel {
             refreshError = nil
             await loadStatuses()
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             if channels.isEmpty { phase = .failed(error.localizedDescription) }
-            else { refreshError = error.localizedDescription }
+            else { refreshError = APIError.userMessage(error) }
         }
     }
 
@@ -108,7 +109,7 @@ final class ChatChannelsSettingsModel {
                 if let now = self.channels.firstIndex(where: { $0.id == channel.id }) {
                     self.channels[now] = self.channels[now].with(enabled: previous)
                 }
-                self.refreshError = error.localizedDescription
+                self.refreshError = APIError.userMessage(error)
             }
         }
         opTail = Task { @MainActor in _ = await task.value }
@@ -154,7 +155,7 @@ final class ChatChannelsSettingsModel {
             toast = "Deleted “\(channel.name)”."
         } catch {
             channels = previous
-            toast = "Couldn’t delete: \(error.localizedDescription)"
+            if let message = APIError.userMessage(error) { toast = "Couldn’t delete: \(message)" }
         }
     }
 }

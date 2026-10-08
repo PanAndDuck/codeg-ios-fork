@@ -30,9 +30,13 @@ final class AgentsSettingsModel {
     /// touches a different field (`sort_order`) and keeps its own coalescing sender.
     private var opTail: Task<Void, Never> = Task {}
 
-    /// A trivial `Error` carrying just a message (Task results must be `Sendable`,
-    /// and `any Error` isn't), so a serialized `update` can relay its failure.
-    private struct OpError: LocalizedError { let message: String; var errorDescription: String? { message } }
+    /// Preserve cancellation across the serial task boundary instead of turning
+    /// it into a message-only failure that the editor would display.
+    private struct OpError: LocalizedError {
+        let message: String
+        var cancelled = false
+        var errorDescription: String? { message }
+    }
 
     init(client: CodegClient?) { self.client = client }
 
@@ -54,8 +58,9 @@ final class AgentsSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             if agents.isEmpty { phase = .failed(error.localizedDescription) }
-            else { refreshError = error.localizedDescription }
+            else { refreshError = APIError.userMessage(error) }
         }
     }
 
@@ -64,7 +69,7 @@ final class AgentsSettingsModel {
     /// so the detail can surface its own error; on success the list reloads.
     func update(_ agent: AcpAgentInfo, enabled: Bool, env: [String: String], modelProviderId: Int?) async throws {
         let prior = opTail
-        let task = Task { @MainActor () -> String? in
+        let task = Task { @MainActor () -> OpError? in
             await prior.value
             guard let client = self.client else { return nil }
             do {
@@ -73,11 +78,14 @@ final class AgentsSettingsModel {
                 await self.loadBody()
                 return nil
             } catch {
-                return error.localizedDescription
+                return OpError(message: error.localizedDescription, cancelled: APIError.isCancellation(error))
             }
         }
         opTail = Task { @MainActor in _ = await task.value }
-        if let message = await task.value { throw OpError(message: message) }
+        if let error = await task.value {
+            if error.cancelled { throw APIError.cancelled }
+            throw error
+        }
     }
 
     /// Live accessor for the detail, which navigates by agent type and reads fresh
@@ -93,13 +101,13 @@ final class AgentsSettingsModel {
     /// affected-sessions toast (max of the two calls). Hermes saves via its own path.
     func saveAgentConfig(_ agentType: AgentType, draft: AgentDraft) async throws {
         let prior = opTail
-        let task = Task { @MainActor () -> String? in
+        let task = Task { @MainActor () -> OpError? in
             await prior.value
             guard let client = self.client,
                   let original = self.agents.first(where: { $0.agentType == agentType }) else { return nil }
             // Reject an unparseable native-config edit BEFORE any write — otherwise a
             // merge agent would diff against `[:]` and emit a destructive delete-all.
-            if let parseError = JSONConfig.parse(draft.configText).error { return parseError }
+            if let parseError = JSONConfig.parse(draft.configText).error { return OpError(message: parseError) }
             // Enforce the linked-provider scrub at SAVE time (not just on a structured
             // edit) so opening a linked agent and pressing Save can't re-emit stale
             // provider-managed secrets.
@@ -136,11 +144,14 @@ final class AgentsSettingsModel {
                 await self.loadBody()
                 return nil
             } catch {
-                return error.localizedDescription
+                return OpError(message: error.localizedDescription, cancelled: APIError.isCancellation(error))
             }
         }
         opTail = Task { @MainActor in _ = await task.value }
-        if let message = await task.value { throw OpError(message: message) }
+        if let error = await task.value {
+            if error.cancelled { throw APIError.cancelled }
+            throw error
+        }
     }
 
     /// Build the `acp_update_agent_config` payload, applying the per-type save rules
@@ -213,17 +224,20 @@ final class AgentsSettingsModel {
     /// of the same data — never trust the stale local draft after a save).
     func saveHermesConfig(_ body: UpdateHermesConfigBody) async throws {
         let prior = opTail
-        let task = Task { @MainActor () -> String? in
+        let task = Task { @MainActor () -> OpError? in
             await prior.value
             guard let client = self.client else { return nil }
             do {
                 try await client.updateHermesConfig(body)
                 await self.loadBody()
                 return nil
-            } catch { return error.localizedDescription }
+            } catch { return OpError(message: error.localizedDescription, cancelled: APIError.isCancellation(error)) }
         }
         opTail = Task { @MainActor in _ = await task.value }
-        if let message = await task.value { throw OpError(message: message) }
+        if let error = await task.value {
+            if error.cancelled { throw APIError.cancelled }
+            throw error
+        }
     }
 
     /// Save Kimi Code via its dedicated endpoint (apikey/login/raw), then reload so
@@ -231,7 +245,7 @@ final class AgentsSettingsModel {
     /// state. Serialized on `opTail` (like Hermes) so it can't race a toggle.
     func saveKimiCodeConfig(_ body: UpdateKimiCodeConfigBody) async throws {
         let prior = opTail
-        let task = Task { @MainActor () -> String? in
+        let task = Task { @MainActor () -> OpError? in
             await prior.value
             guard let client = self.client else { return nil }
             do {
@@ -239,10 +253,13 @@ final class AgentsSettingsModel {
                 self.surfaceAffected(affected)
                 await self.loadBody()
                 return nil
-            } catch { return error.localizedDescription }
+            } catch { return OpError(message: error.localizedDescription, cancelled: APIError.isCancellation(error)) }
         }
         opTail = Task { @MainActor in _ = await task.value }
-        if let message = await task.value { throw OpError(message: message) }
+        if let error = await task.value {
+            if error.cancelled { throw APIError.cancelled }
+            throw error
+        }
     }
 
     /// Install / upgrade / uninstall. Awaits the (blocking) server call, then
@@ -283,7 +300,7 @@ final class AgentsSettingsModel {
                 // A failed upgrade/custom-install may have cleared a working binary —
                 // re-detect so the UI doesn't show a phantom installed version.
                 if didClearCache { await self.reconcileAfterInstall(agentType, uninstall: false, expected: nil) }
-                self.refreshError = error.localizedDescription
+                self.refreshError = APIError.userMessage(error)
                 return false
             }
         }
@@ -308,7 +325,7 @@ final class AgentsSettingsModel {
                 self.toast = "uv runtime installed."
                 return true
             } catch {
-                self.refreshError = error.localizedDescription
+                self.refreshError = APIError.userMessage(error)
                 return false
             }
         }
@@ -386,8 +403,9 @@ final class AgentsSettingsModel {
                 return .applied
             } catch {
                 if let now = self.agents.firstIndex(where: { $0.id == agent.id }) { self.agents[now].enabled = previous }
-                self.refreshError = error.localizedDescription
-                return .failed(error.localizedDescription)
+                self.refreshError = APIError.userMessage(error)
+                guard let message = APIError.userMessage(error) else { return .noChange }
+                return .failed(message)
             }
         }
         opTail = Task { @MainActor in _ = await task.value }
@@ -406,7 +424,7 @@ final class AgentsSettingsModel {
             try await client.clearBinaryCache(agentType: agent.agentType)
             toast = "Cleared \(agent.name)'s binary cache."
         } catch {
-            refreshError = error.localizedDescription
+            refreshError = APIError.userMessage(error)
         }
     }
 
@@ -429,7 +447,7 @@ final class AgentsSettingsModel {
             pendingOrder = nil
             do { try await client.reorderAgents(order) }
             catch {
-                refreshError = error.localizedDescription
+                refreshError = APIError.userMessage(error)
                 await load()
                 return
             }

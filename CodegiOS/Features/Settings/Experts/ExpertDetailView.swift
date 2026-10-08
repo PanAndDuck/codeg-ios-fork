@@ -251,7 +251,7 @@ final class ExpertDetailModel {
             error = nil
         } catch {
             isLoading = false
-            self.error = error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
     }
 
@@ -273,7 +273,7 @@ final class ExpertDetailModel {
                 }
             }
         } catch {
-            self.error = error.localizedDescription
+            self.error = APIError.userMessage(error)
             await load() // re-sync the real state after a failed toggle
         }
     }

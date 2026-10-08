@@ -338,7 +338,7 @@ struct KimiConfigSection: View {
                 try await model.saveKimiCodeConfig(body)
                 banner = Banner(text: success, isError: false)
             } catch {
-                banner = Banner(text: error.localizedDescription, isError: true)
+                banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) }
             }
             saving = false
         }
@@ -358,7 +358,7 @@ struct KimiConfigSection: View {
                 models = list
                 banner = Banner(text: list.isEmpty ? "Key works, but no models were returned" : "Found \(list.count) models", isError: false)
             } catch {
-                banner = Banner(text: "Couldn’t list models — check the key and endpoint", isError: true)
+                banner = APIError.userMessage(error).map { Banner(text: $0, isError: true) }
             }
             fetchingModels = false
         }

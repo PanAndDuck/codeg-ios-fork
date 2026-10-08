@@ -357,8 +357,8 @@ final class SessionDetailViewModel {
             // on screen (better than replacing a working view with an error for a
             // transient network blip); the initial `load()` path, which has nothing
             // to fall back to, is the one that needs `phase = .failed`.
-            if phase != .loaded {
-                phase = .failed(Self.describe(error))
+            if phase != .loaded, let message = APIError.userMessage(error) {
+                phase = .failed(message)
             }
         }
     }
@@ -484,7 +484,7 @@ final class SessionDetailViewModel {
             }
             return list
         } catch {
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
             return nil
         }
     }
@@ -535,8 +535,11 @@ final class SessionDetailViewModel {
         case .navigateExternal(let path, let rootId):
             // Worktree dir not registered yet — register it (parented to the root),
             // then navigate into it.
-            guard let detail = try? await client.openWorktreeFolder(path: path, sourceFolderId: rootId) else {
-                notice = "Couldn’t open the worktree folder."
+            let detail: FolderDetail
+            do {
+                detail = try await client.openWorktreeFolder(path: path, sourceFolderId: rootId)
+            } catch {
+                notice = APIError.userMessage(error)
                 return .failed
             }
             NotificationCenter.default.post(name: .foldersDidChange, object: nil)
@@ -546,6 +549,7 @@ final class SessionDetailViewModel {
             do {
                 try await client.gitCheckout(path: root.path, branchName: branch)
             } catch {
+                guard !APIError.isCancellation(error) else { return .failed }
                 // A plain `git checkout` is refused by git when the branch is
                 // already checked out in another worktree ("fatal: '<b>' is already
                 // used by worktree at '<path>'"). We only land here when resolution
@@ -557,7 +561,7 @@ final class SessionDetailViewModel {
                 if let outcome = await recoverFromWorktreeCheckout(branch: branch, root: root, error: error) {
                     return outcome
                 }
-                notice = Self.describe(error)
+                notice = APIError.userMessage(error)
                 return .failed
             }
             if root.id == active.id {
@@ -592,7 +596,8 @@ final class SessionDetailViewModel {
         }
         // Fallback for servers without `resolve_worktree_folder`: git names the
         // occupying worktree in its error ("… already used by worktree at '<path>'").
-        if let path = Self.worktreePath(fromCheckoutError: Self.describe(error)) {
+        let detail = (error as? APIError)?.debugDescription ?? error.localizedDescription
+        if let path = Self.worktreePath(fromCheckoutError: detail) {
             return await openWorktreeSession(path: path, folderId: nil, root: root)
         }
         return nil
@@ -634,7 +639,7 @@ final class SessionDetailViewModel {
             currentBranch = name
             return true
         } catch {
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
             return false
         }
     }
@@ -775,7 +780,7 @@ final class SessionDetailViewModel {
         } catch APIError.turnInProgress {
             notice = "A turn is already running on this session. Try again in a moment."
             discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
-        } catch is CancellationError {
+        } catch where APIError.isCancellation(error) {
             // Cancelled by the user / view teardown — handled in cancel().
         } catch {
             // Reaching here means the prompt was never accepted (resolve/attach/
@@ -783,7 +788,7 @@ final class SessionDetailViewModel {
             // server. Roll it back and surface why, instead of stranding a
             // phantom "sent" message in the transcript.
             discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
         }
     }
 
@@ -805,14 +810,14 @@ final class SessionDetailViewModel {
             if case .connecting = sendState { sendState = .thinking }
             try await sendPrompt(conn: conn, text: text, attachments: sending, clientMessageID: clientMessageID)
             draftCreatedConversationID = nil
-        } catch is CancellationError {
+        } catch where APIError.isCancellation(error) {
             // no-op
         } catch APIError.turnInProgress {
             notice = "A turn is already running on this session. Try again in a moment."
             discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
         } catch {
             discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
         }
     }
 
@@ -1648,7 +1653,7 @@ final class SessionDetailViewModel {
             requestScrollToBottom()
             return true
         } catch {
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
             return false
         }
     }
@@ -1662,7 +1667,7 @@ final class SessionDetailViewModel {
             requestScrollToBottom()
             return true
         } catch {
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
             return false
         }
     }
@@ -1695,7 +1700,7 @@ final class SessionDetailViewModel {
             requestScrollToBottom()
             return true
         } catch {
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
             return false
         }
     }
@@ -1928,7 +1933,7 @@ final class SessionDetailViewModel {
             notifyConversationsChanged()
         } catch {
             summary?.title = previous
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
         }
     }
 
@@ -1944,7 +1949,7 @@ final class SessionDetailViewModel {
             notifyConversationsChanged()
         } catch {
             summary?.pinnedAt = previous
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
         }
     }
 
@@ -1959,7 +1964,7 @@ final class SessionDetailViewModel {
             notifyConversationsChanged()
         } catch {
             summary?.status = previous ?? status
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
         }
     }
 
@@ -1972,7 +1977,7 @@ final class SessionDetailViewModel {
             notifyConversationsChanged()
             return true
         } catch {
-            notice = Self.describe(error)
+            notice = APIError.userMessage(error)
             return false
         }
     }
@@ -1983,10 +1988,4 @@ final class SessionDetailViewModel {
         NotificationCenter.default.post(name: .conversationsDidChange, object: nil)
     }
 
-    // MARK: - Errors
-
-    private static func describe(_ error: Error) -> String {
-        if let api = error as? APIError { return api.errorDescription ?? "\(api)" }
-        return error.localizedDescription
-    }
 }

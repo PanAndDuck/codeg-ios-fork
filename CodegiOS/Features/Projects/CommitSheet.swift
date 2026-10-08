@@ -237,7 +237,7 @@ struct CommitSheet: View {
             // Tracked changes start selected; untracked start unselected (web parity).
             selected = Set(result.filter { $0.change != .untracked }.map(\.path))
         } catch {
-            loadError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            loadError = APIError.userMessage(error)
         }
         loading = false
     }
@@ -257,7 +257,7 @@ struct CommitSheet: View {
                 dismiss()
             } catch {
                 committing = false
-                commitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                commitError = APIError.userMessage(error)
             }
         }
     }

@@ -135,8 +135,10 @@ final class TerminalSession {
             // Done regardless of cancellation so a superseded spawn can't leak.
             try? await client.terminalKill(terminalId: id)
             guard isCurrent(id) else { return }   // superseded — restart owns cleanup now
-            phase = .failed(message: error.localizedDescription)
-            view.feed(text: "\r\n\u{1b}[31m[Failed to start terminal: \(error.localizedDescription)]\u{1b}[0m\r\n")
+            if let message = APIError.userMessage(error) {
+                phase = .failed(message: message)
+                view.feed(text: "\r\n\u{1b}[31m[Failed to start terminal: \(message)]\u{1b}[0m\r\n")
+            }
             runtime.replaceSocket(nil)
             runtime.replaceWriteQueue(nil)
         }

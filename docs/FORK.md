@@ -98,6 +98,36 @@ xcodebuild -project CodegiOS.xcodeproj -scheme CodegiOS \
 The resulting display name, bundle id and URL scheme are `Codeg`, `app.codeg.ios`
 and `codeg`. No official build is installed by `build-fork.sh`.
 
+## Network errors and request timeouts
+
+The client distinguishes cancellation, timeout, offline access, interrupted
+connections, unreachable hosts and TLS failures. Common relay responses and
+oversized attachments have English and Simplified Chinese guidance. Authentication
+rate limits show `retry_after_secs`, falling back to the numeric `Retry-After`
+header when needed. Rate limits are not retried by the short network retry loop.
+
+`APIError.userMessage(_:)` returns no message for cancellation. Error screens,
+notices and settings editors use that rule while keeping their rollback and
+loading cleanup. `APIError.debugDescription` retains transport codes and server
+status/code/message for diagnosis; it is not automatically logged.
+
+`acp_connect` uses `probeSession` (90s request / 150s resource timeout), allowing
+the server's agent resume to take up to 60s. Agent option probes and repository
+clones already use this session; installs use 120s / 900s. Normal reads keep
+their existing 15s / 60s or 30s / 120s limits.
+
+All sessions retain `waitsForConnectivity`. An exact “Waiting for network…”
+indicator needs `URLSessionTaskDelegate`'s waiting callback; it is deferred to
+the session-factory/TLS work rather than adding another delegate here. TLS
+pinning can add `APIError.untrustedCertificate(fingerprint:)` beside `.tls`;
+`fromTransport(_:)` preserves typed errors and `isTransient` defaults to false
+for new cases.
+
+The error tests use an in-process `URLProtocol` fixture, never a running codeg
+server. For parallel tasks, select a dedicated simulator with
+`scripts/build-fork.sh test --name <simulator-name>` and use the same name for
+`sim`, avoiding concurrent installation of the fork into one simulator.
+
 ## Isolation and links
 
 Fork OS links use `codegfork://`, for example `codegfork://tab/settings`.

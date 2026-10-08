@@ -174,7 +174,7 @@ struct SkillEditorSheet: View {
     private func loadIfNeeded() async {
         guard let existing else { return }
         do { content = try await loadContent(existing) }
-        catch { saveError = error.localizedDescription }
+        catch { saveError = APIError.userMessage(error) }
         isLoadingContent = false
     }
 
@@ -188,7 +188,7 @@ struct SkillEditorSheet: View {
                 try await onSave(snapshotId, scope, snapshotContent, layout)
                 dismiss()
             } catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 isSaving = false
             }
         }

@@ -225,7 +225,7 @@ struct GitCredentialSheet: View {
                 let creds = GitCredentials(username: validation.username ?? "unknown", password: trimmed)
                 model.submitCredentials(GitCredentialOutcome(credentials: creds, saveAfterSuccess: false))
             } catch {
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.error = APIError.userMessage(error)
                 submitting = false
             }
         }

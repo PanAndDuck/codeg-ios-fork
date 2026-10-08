@@ -138,7 +138,7 @@ struct FolderCommitsView: View {
             if (error as? APIError)?.isNotAGitRepository == true {
                 notARepo = true
             } else {
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.error = APIError.userMessage(error)
             }
         }
         isLoading = false
@@ -485,7 +485,7 @@ struct CommitDetailView: View {
             let raw = try await client.gitShowDiff(path: rootPath, commit: entry.fullHash)
             diffFiles = UnifiedDiff.parse(raw) ?? []
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
         isLoading = false
     }

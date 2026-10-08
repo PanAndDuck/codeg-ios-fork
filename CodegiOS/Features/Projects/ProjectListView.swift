@@ -85,7 +85,7 @@ struct ProjectListView: View {
             _ = try await client.openFolder(path: path)
             await activity.refresh(client: client)
         } catch {
-            actionError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            actionError = APIError.userMessage(error)
         }
     }
 

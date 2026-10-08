@@ -164,10 +164,10 @@ struct SearchView: View {
             results = loaded.sorted { $0.updatedAt > $1.updatedAt }
             folderNames = Dictionary(loadedFolders.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
             hasSearched = true
-        } catch is CancellationError {
+        } catch where APIError.isCancellation(error) {
         } catch {
             guard !Task.isCancelled else { return }
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
     }
 

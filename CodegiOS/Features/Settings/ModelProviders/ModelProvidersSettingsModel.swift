@@ -53,8 +53,9 @@ final class ModelProvidersSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             if items.isEmpty { phase = .failed(error.localizedDescription) }
-            else { refreshError = error.localizedDescription }
+            else { refreshError = APIError.userMessage(error) }
         }
     }
 
@@ -92,7 +93,7 @@ final class ModelProvidersSettingsModel {
     /// The block comes from persisted agent *settings* that reference this provider
     /// (`model_provider_id`), so the fix is to unlink it in those agents' settings —
     /// not to stop running sessions. Mirrors the web's "unlink before deleting".
-    private static func deleteErrorMessage(_ error: Error) -> String {
+    private static func deleteErrorMessage(_ error: Error) -> String? {
         if case let APIError.server(_, _, message) = error,
            let range = message.range(of: "PROVIDER_IN_USE:") {
             let names = message[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -101,6 +102,6 @@ final class ModelProvidersSettingsModel {
             }
             return "\(names) is currently using this provider. Unlink it in those agents’ settings before deleting."
         }
-        return error.localizedDescription
+        return APIError.userMessage(error)
     }
 }

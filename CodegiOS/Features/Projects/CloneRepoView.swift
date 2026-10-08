@@ -200,7 +200,7 @@ struct CloneRepoView: View {
             dismiss()
         } catch {
             cloning = false
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = APIError.userMessage(error)
         }
     }
 }

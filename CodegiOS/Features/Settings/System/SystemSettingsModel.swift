@@ -65,6 +65,7 @@ final class SystemSettingsModel {
             applyTerminal((try await term).defaultShell)
             phase = .loaded
         } catch {
+            guard !APIError.isCancellation(error) else { return }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -108,7 +109,7 @@ final class SystemSettingsModel {
             let url = proxyUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             do { try await client.updateSystemProxySettings(enabled: enabled, proxyUrl: url.isEmpty ? nil : url) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 // Reconcile to server truth ONLY if no newer edit is queued (checked
                 // around the await); otherwise let the loop send it, so a failure
                 // during a concurrent edit can't drop that edit. Don't return.
@@ -140,7 +141,7 @@ final class SystemSettingsModel {
             let lang = language
             do { try await client.updateSystemLanguageSettings(mode: mode, language: lang) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 // Reconcile only when no newer edit is queued; never drop a
                 // concurrent edit. Don't return — let the loop drain it.
                 if !languagePending, let l = try? await client.systemLanguageSettings(), !languagePending {
@@ -184,7 +185,7 @@ final class SystemSettingsModel {
             guard let value = terminalValue() else { continue }   // became empty-custom
             do { try await client.updateSystemTerminalSettings(defaultShell: value) }
             catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 // Reconcile only when no newer edit is queued; never drop a
                 // concurrent edit. Don't return — let the loop drain it.
                 if !terminalPending, let t = try? await client.systemTerminalSettings(), !terminalPending {
@@ -210,6 +211,6 @@ final class SystemSettingsModel {
         checkingUpdate = true
         defer { checkingUpdate = false }
         do { updateInfo = try await client.checkAppUpdate() }
-        catch { toast = "Update check failed: \(error.localizedDescription)" }
+        catch { if let message = APIError.userMessage(error) { toast = "Update check failed: \(message)" } }
     }
 }

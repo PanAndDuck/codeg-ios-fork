@@ -150,7 +150,7 @@ final class AgentOptionsModel {
                 if Task.isCancelled { return }
                 self.cache[agentType] = probe
                 self.applyCatalog(probe)
-            } catch is CancellationError {
+            } catch where APIError.isCancellation(error) {
                 // superseded / torn down
             } catch {
                 if Task.isCancelled { return }
@@ -259,7 +259,7 @@ final class AgentOptionsModel {
                 // (by id, so it works even before the connection binds to the
                 // conversation) before trusting the optimistic value.
                 await self.reconcile(key: key, desired: desired, connectionId: conn)
-            } catch is CancellationError {
+            } catch where APIError.isCancellation(error) {
                 revert()
                 self.connectionTask = nil
             } catch {

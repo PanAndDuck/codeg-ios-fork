@@ -232,7 +232,7 @@ struct GitHubAccountEditorSheet: View {
                 try await onSubmit(account, tokenToSend)
                 dismiss()
             } catch {
-                saveError = error.localizedDescription
+                saveError = APIError.userMessage(error)
                 isSaving = false
             }
         }

@@ -135,7 +135,7 @@ final class ComposeInsertModel {
                 }
                 if Task.isCancelled { return }
                 self.phases[source] = .loaded
-            } catch is CancellationError {
+            } catch where APIError.isCancellation(error) {
                 // superseded / torn down
             } catch {
                 if Task.isCancelled { return }

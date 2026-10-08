@@ -179,7 +179,7 @@ struct DirectoryBrowserView: View {
         isLoading = false
     }
 
-    private func message(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    private func message(for error: Error) -> String? {
+        APIError.userMessage(error)
     }
 }
