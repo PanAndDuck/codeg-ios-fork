@@ -11,12 +11,18 @@ final class ServerEditorModel {
     enum TestResult: Equatable {
         case success(version: String)
         case failure(message: String)
+        case certificate(fingerprint: String, isMismatch: Bool)
     }
 
     // Editable fields
     var name: String
-    var urlString: String
-    var token: String
+    var urlString: String { didSet { fieldsChanged() } }
+    var token: String { didSet { fieldsChanged() } }
+    private(set) var pinnedCertSHA256: String?
+    private(set) var pairingMode: String?
+    private(set) var scanError: String?
+    private let probeID = UUID()
+    private let sessionFactory = SessionFactory()
 
     private(set) var isTesting = false
     private(set) var testResult: TestResult?
@@ -43,6 +49,8 @@ final class ServerEditorModel {
         self.editing = editing
         self.name = editing?.name ?? ""
         self.urlString = editing?.urlString ?? ""
+        self.pinnedCertSHA256 = editing?.pinnedCertSHA256
+        self.pairingMode = editing?.pairingMode
         self.hasExistingToken = editing != nil && hasExistingToken
         self.resolveExistingToken = resolveExistingToken
         // The token secret is never loaded into editable state. An empty field
@@ -69,7 +77,9 @@ final class ServerEditorModel {
     /// for an address that will resolve, and so the persisted string round-trips
     /// cleanly back through `ServerProfile.baseURL`.
     var parsedBaseURL: URL? {
-        Self.normalizedURL(from: urlString)
+        guard let url = Self.normalizedURL(from: urlString),
+              pinnedCertSHA256 == nil || url.scheme?.lowercased() == "https" else { return nil }
+        return url
     }
 
     /// The string to persist: the normalized absolute URL when available so the
@@ -135,7 +145,7 @@ final class ServerEditorModel {
     /// - Embedded userinfo (`user:pass@host`) is rejected: such inputs derive
     ///   the effective host from the authority and could send the bearer token
     ///   to an unintended host.
-    static func normalizedURL(from raw: String) -> URL? {
+    nonisolated static func normalizedURL(from raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -158,6 +168,7 @@ final class ServerEditorModel {
         guard let scheme = components.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
               let host = components.host, !host.isEmpty else { return nil }
+        components.scheme = scheme
         // Reject embedded credentials — the token must only reach the host the
         // user actually typed, not one extracted from `user:pass@host`.
         guard components.user == nil, components.password == nil else { return nil }
@@ -180,6 +191,7 @@ final class ServerEditorModel {
     /// request is in flight the result is discarded, so a stale probe can't
     /// display a success/failure that no longer matches the visible fields.
     func testConnection() async {
+        guard !isTesting else { return }
         guard let baseURL = parsedBaseURL else {
             testResult = .failure(message: APIError.invalidURL.localizedDescription)
             return
@@ -190,17 +202,22 @@ final class ServerEditorModel {
         // *field* (not the resolved token) for the staleness check below.
         let probedURL = urlString
         let probedToken = trimmedToken
+        let probedPin = pinnedCertSHA256
         let tokenToSend = trimmedToken.isEmpty ? (resolveExistingToken() ?? "") : trimmedToken
 
         isTesting = true
         testResult = nil
         defer { isTesting = false }
 
-        let client = CodegClient(baseURL: baseURL, token: tokenToSend)
+        let profile = ServerProfile(id: probeID, name: name, urlString: baseURL.absoluteString,
+                                    pinnedCertSHA256: probedPin)
+        let client = CodegClient(baseURL: baseURL, token: tokenToSend, sessions: sessionFactory.sessions(for: profile))
         let result: TestResult
         do {
             let health = try await client.health()
             result = .success(version: health.version)
+        } catch APIError.untrustedCertificate(let fingerprint) {
+            result = .certificate(fingerprint: fingerprint, isMismatch: probedPin != nil)
         } catch {
             guard let message = APIError.userMessage(error) else { return }
             result = .failure(message: message)
@@ -209,7 +226,7 @@ final class ServerEditorModel {
         // Only surface the result if the fields it was computed from still hold;
         // otherwise drop it (a newer edit invalidated this probe). `isTesting`
         // is always cleared via the defer above.
-        guard probedURL == urlString, probedToken == trimmedToken else { return }
+        guard probedURL == urlString, probedToken == trimmedToken, probedPin == pinnedCertSHA256 else { return }
         testResult = result
     }
 
@@ -218,64 +235,38 @@ final class ServerEditorModel {
         if testResult != nil { testResult = nil }
     }
 
-    // MARK: - QR scan
-
-    /// Apply a value decoded from a server QR code, filling the editable fields.
-    ///
-    /// codeg's desktop encodes the bare `http://host:port` address, so the common
-    /// case is a plain URL → the URL field. We're forgiving beyond that:
-    /// - A JSON payload (`{"url"|"address"|"server", "token"?, "name"?}`) fills the
-    ///   matching fields.
-    /// - A plain address may carry a `?token=…` query, which is split out into the
-    ///   token field rather than left in the persisted URL.
-    ///
-    /// Returns `true` when at least a usable, validated URL was extracted (and
-    /// clears any stale test result); `false` if the payload isn't a server
-    /// address, so the sheet can show "not a valid server QR".
+    /// Stage an explicitly accepted certificate with the other editable fields.
+    /// Replacements require the separate confirmation presented by the sheet.
     @discardableResult
-    func applyScanned(_ raw: String) -> Bool {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        // 1) JSON payload (defensive — codeg encodes a bare URL, but be forgiving).
-        if let data = trimmed.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let candidate = (object["url"] ?? object["address"] ?? object["server"]) as? String
-            guard let candidate, let normalized = Self.normalizedURL(from: candidate) else { return false }
-            urlString = normalized.absoluteString
-            if let name = (object["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !name.isEmpty, trimmedName.isEmpty {
-                self.name = name
-            }
-            if let token = (object["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !token.isEmpty {
-                self.token = token
-            }
-            fieldsChanged()
-            return true
-        }
-
-        // 2) Plain address, possibly with a `?token=` query item.
-        let (address, scannedToken) = Self.splitToken(from: trimmed)
-        guard let normalized = Self.normalizedURL(from: address) else { return false }
-        urlString = normalized.absoluteString
-        if let scannedToken { self.token = scannedToken }
+    func trustPresentedCertificate(replacingPin: Bool = false) -> Bool {
+        guard case .certificate(let fingerprint, let isMismatch) = testResult,
+              !isMismatch || replacingPin,
+              let canonical = try? CertificateFingerprint.normalize(fingerprint) else { return false }
+        pinnedCertSHA256 = canonical
+        sessionFactory.invalidate(probeID)
         fieldsChanged()
         return true
     }
 
-    /// Pull an optional `token` query item out of an address, returning the
-    /// address without it and the token (if present and non-empty).
-    private static func splitToken(from raw: String) -> (address: String, token: String?) {
-        guard var components = URLComponents(string: raw),
-              let items = components.queryItems, !items.isEmpty else {
-            return (raw, nil)
+    // MARK: - QR scan
+
+    /// Parse fully before applying, so a bad fingerprint never leaves a partly
+    /// imported endpoint/token. A QR replaces the trust metadata along with URL.
+    @discardableResult
+    func applyScanned(_ raw: String) -> Bool {
+        do {
+            let pairing = try PairingPayload.parse(raw)
+            urlString = pairing.url.absoluteString
+            if let name = pairing.name { self.name = name }
+            if let token = pairing.token { self.token = token }
+            pinnedCertSHA256 = pairing.fingerprint
+            pairingMode = pairing.mode
+            scanError = nil
+            fieldsChanged()
+            return true
+        } catch {
+            scanError = error.localizedDescription
+            return false
         }
-        let token = items.first { $0.name.lowercased() == "token" }?.value
-        let remaining = items.filter { $0.name.lowercased() != "token" }
-        components.queryItems = remaining.isEmpty ? nil : remaining
-        let address = components.string ?? raw
-        let cleanedToken = token?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (address, (cleanedToken?.isEmpty == false) ? cleanedToken : nil)
     }
 }

@@ -3,6 +3,7 @@ import Foundation
 /// Typed errors surfaced by `CodegClient`.
 enum APIError: LocalizedError, Sendable, Equatable, CustomDebugStringConvertible {
     case invalidURL
+    case untrustedCertificate(fingerprint: String)
     case unauthorized
     case turnInProgress
     case server(status: Int, code: String?, message: String)
@@ -11,8 +12,6 @@ enum APIError: LocalizedError, Sendable, Equatable, CustomDebugStringConvertible
     case offline(String)
     case connectionLost(String)
     case serverUnreachable(String)
-    // TLS/pinning extension point: I5 adds untrustedCertificate(fingerprint:)
-    // here. Keep it non-transient and preserve it in fromTransport(_:).
     case tls(String)
     case relayAgentOffline(String)
     case relayStreamFailed(String)
@@ -36,6 +35,8 @@ enum APIError: LocalizedError, Sendable, Equatable, CustomDebugStringConvertible
         switch self {
         case .invalidURL:
             return String(localized: "The server address is not a valid URL.", bundle: bundle)
+        case .untrustedCertificate(let fingerprint):
+            return String(localized: "The server certificate is untrusted or does not match the saved pin. Verify it in Edit Server. SHA-256: \(CertificateFingerprint.display(fingerprint))", bundle: bundle)
         case .unauthorized:
             return String(localized: "Authentication failed. Check the server token.", bundle: bundle)
         case .turnInProgress:
@@ -89,6 +90,7 @@ enum APIError: LocalizedError, Sendable, Equatable, CustomDebugStringConvertible
     var debugDescription: String {
         switch self {
         case .invalidURL: return "invalidURL"
+        case .untrustedCertificate(let fingerprint): return "untrustedCertificate: \(fingerprint)"
         case .unauthorized: return "unauthorized (HTTP 401)"
         case .turnInProgress: return "turnInProgress (HTTP 409 / turn_in_progress)"
         case .cancelled: return "cancelled (NSURLErrorCancelled)"

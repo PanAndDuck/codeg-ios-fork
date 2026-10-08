@@ -56,6 +56,9 @@ struct RootView: View {
         .onChange(of: model.selectedServer?.urlString) { _, _ in
             model.selectedServerEndpointChanged()
         }
+        .onChange(of: model.selectedServer?.pinnedCertSHA256) { _, _ in
+            model.selectedServerEndpointChanged()
+        }
         // App-wide activity pulse: feeds the Activity tab, its sidebar badge,
         // and the bottom running bar. Restarts when the scene activates or the
         // server identity/endpoint changes; pauses in the background.
@@ -72,7 +75,7 @@ struct RootView: View {
     /// should restart the loop.
     private var activityPulseID: String {
         let server = model.selectedServerID?.uuidString ?? "none"
-        let endpoint = model.selectedServer?.urlString ?? ""
+        let endpoint = model.selectedServer?.connectionIdentity ?? ""
         return "\(String(describing: scenePhase))|\(server)|\(endpoint)"
     }
 
@@ -173,7 +176,7 @@ struct RootView: View {
                         onManage: { model.serversSheetPresented = true }
                     )
                 )
-                .id(server.id)
+                .id(server.connectionIdentity)
             } else if model.selectedServer != nil {
                 ColumnPlaceholder(
                     icon: "key.slash",
@@ -208,7 +211,7 @@ struct RootView: View {
                 client: model.selectedClient(),
                 onOpenProject: { model.open(.project($0)) }
             )
-            .id(model.selectedServerID)
+            .id(model.selectedServer?.connectionIdentity)
             .navigationDestination(for: Route.self) { route in
                 routeDestination(route)
             }
@@ -243,7 +246,7 @@ struct RootView: View {
                 client: model.selectedClient(),
                 onOpen: { model.open(.conversation($0)) }
             )
-            .id(model.selectedServerID)
+            .id(model.selectedServer?.connectionIdentity)
             .navigationDestination(for: Route.self) { route in
                 routeDestination(route)
             }
@@ -287,7 +290,7 @@ struct RootView: View {
                     selectedConversationID: $model.selectedConversationID,
                     onNewSession: { model.open(.newSession(NewSessionRequest())) }
                 )
-                .id(server.id)
+                .id(server.connectionIdentity)
             } else {
                 ColumnPlaceholder(
                     icon: "bubble.left.and.bubble.right",
@@ -301,7 +304,7 @@ struct RootView: View {
                 client: model.selectedClient(),
                 onOpenProject: { model.open(.project($0)) }
             )
-            .id(model.selectedServerID)
+            .id(model.selectedServer?.connectionIdentity)
         case .activity:
             ActivityView(
                 activity: model.activity,
@@ -324,7 +327,7 @@ struct RootView: View {
            let pending = model.pendingNewSession {
             SessionDetailView(server: server, client: client, newSession: pending,
                               onOpenSession: { model.open(.newSession($0)) })
-                .id(pending.id)
+                .id("\(server.connectionIdentity)|\(pending.id)")
         } else if let server = model.selectedServer,
                   let client = model.serverStore.client(for: server),
                   let conversationID = model.selectedConversationID {
@@ -333,7 +336,7 @@ struct RootView: View {
                 // Recreate the stateful detail model when the conversation, the
                 // server, or its token changes — so it never streams against a
                 // stale CodegClient after an in-place server edit / token rotation.
-                .id("\(server.id)|\(conversationID)|\(client.token.hashValue)")
+                .id("\(server.connectionIdentity)|\(conversationID)|\(client.token.hashValue)")
         } else {
             ColumnPlaceholder(
                 icon: "sparkles",
@@ -356,12 +359,12 @@ struct RootView: View {
             case .conversation(let id):
                 SessionDetailView(server: server, client: client, conversationID: id,
                                   onOpenSession: { model.open(.newSession($0)) })
-                    .id("\(server.id)|\(id)|\(client.token.hashValue)")
+                    .id("\(server.connectionIdentity)|\(id)|\(client.token.hashValue)")
                     .toolbar(.hidden, for: .tabBar)
             case .newSession(let request):
                 SessionDetailView(server: server, client: client, newSession: request,
                                   onOpenSession: { model.open(.newSession($0)) })
-                    .id(request.id)
+                    .id("\(server.connectionIdentity)|\(request.id)")
                     .toolbar(.hidden, for: .tabBar)
             case .project(let id):
                 ProjectDetailView(
@@ -370,7 +373,7 @@ struct RootView: View {
                     activity: model.activity,
                     onNewSession: { model.open(.newSession(NewSessionRequest(preselectedFolderID: $0.id))) }
                 )
-                .id("\(server.id)|folder-\(id)")
+                .id("\(server.connectionIdentity)|folder-\(id)")
             }
         } else {
             ColumnPlaceholder(

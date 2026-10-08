@@ -6,59 +6,22 @@ import Foundation
 struct CodegClient: Sendable {
     let baseURL: URL
     let token: String
-    let session: URLSession
+    private let sessionOverride: URLSession?
+    private let sessions: SessionFactory.Sessions
 
-    init(baseURL: URL, token: String, session: URLSession = CodegClient.defaultSession) {
+    var session: URLSession { sessionOverride ?? sessions[.standard] }
+    var readSession: URLSession { sessionOverride ?? sessions[.read] }
+    var probeSession: URLSession { sessionOverride ?? sessions[.probe] }
+    var installSession: URLSession { sessionOverride ?? sessions[.install] }
+    var streamSession: URLSession { sessionOverride ?? sessions[.stream] }
+
+    init(baseURL: URL, token: String, session: URLSession? = nil,
+         sessions: SessionFactory.Sessions? = nil) {
         self.baseURL = baseURL
         self.token = token
-        self.session = session
+        self.sessionOverride = session
+        self.sessions = sessions ?? SessionFactory.Sessions(baseURL: baseURL, pin: nil)
     }
-
-    static let defaultSession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 120
-        cfg.waitsForConnectivity = true
-        return URLSession(configuration: cfg)
-    }()
-
-    /// Snappier session for the frequently-polled list reads (folders +
-    /// conversations). These normally answer in well under a second, so a dead
-    /// LAN host should surface in ~15s rather than the 30s default — that keeps a
-    /// retry quick and the failure banner from feeling stuck. The 60s resource
-    /// cap still allows a slow-but-progressing transfer on a large server.
-    static let readSession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 15
-        cfg.timeoutIntervalForResource = 60
-        cfg.waitsForConnectivity = true
-        return URLSession(configuration: cfg)
-    }()
-
-    /// Longer-timeout session for slow server operations: `acp_connect` can spend
-    /// up to 60s resuming an agent, `acp_describe_agent_options`
-    /// spawns a probe agent (up to ~60s to come up), and `clone_repository` runs a
-    /// full `git clone` that can take a while. The 30s default would abort either.
-    static let probeSession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 90
-        cfg.timeoutIntervalForResource = 150
-        cfg.waitsForConnectivity = true
-        return URLSession(configuration: cfg)
-    }()
-
-    /// Very-long-timeout session for agent install/upgrade/uninstall: the server's
-    /// `acp_download_agent_binary` / `acp_prepare_npx_agent` / `acp_install_uv_tool`
-    /// handlers block until the install finishes (a cold npx/uv install can take
-    /// minutes — the web sets a 10-min ceiling on uv). `timeoutIntervalForRequest`
-    /// is the inactivity timeout; `timeoutIntervalForResource` is the overall cap.
-    static let installSession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 120
-        cfg.timeoutIntervalForResource = 900
-        cfg.waitsForConnectivity = true
-        return URLSession(configuration: cfg)
-    }()
 
     // MARK: - Endpoints
 
@@ -67,12 +30,12 @@ struct CodegClient: Sendable {
     /// the 30s default — this endpoint normally answers in well under a second,
     /// and it backs the per-server status dots and the editor's Test Connection.
     func health() async throws -> HealthResponse {
-        try await postJSON("health", EmptyBody(), session: Self.readSession)
+        try await postJSON("health", EmptyBody(), session: readSession)
     }
 
     /// All projects/folders known to the server.
     func listFolders() async throws -> [FolderDetail] {
-        try await postJSON("list_all_folder_details", EmptyBody(), session: Self.readSession)
+        try await postJSON("list_all_folder_details", EmptyBody(), session: readSession)
     }
 
     /// Folders shown in the workspace lists: open + `regular` only (the server
@@ -81,7 +44,7 @@ struct CodegClient: Sendable {
     /// — see ``FolderVisibility``. Use ``listFolders()`` (the full set) for by-id
     /// lookups so a conversation in a worktree/chat folder still resolves.
     func listOpenFolders() async throws -> [FolderDetail] {
-        try await postJSON("list_open_folder_details", EmptyBody(), session: Self.readSession)
+        try await postJSON("list_open_folder_details", EmptyBody(), session: readSession)
     }
 
     /// Conversations, optionally filtered by folder / status / search text.
@@ -98,7 +61,7 @@ struct CodegClient: Sendable {
             sortBy: sortBy,
             status: status,
             includeChildren: nil
-        ), session: Self.readSession)
+        ), session: readSession)
     }
 
     /// Full session detail incl. message history.
@@ -175,7 +138,7 @@ struct CodegClient: Sendable {
         _ = try await send(
             "clone_repository",
             body: CloneRepositoryBody(url: url, targetDir: targetDir, credentials: credentials),
-            session: Self.probeSession
+            session: probeSession
         )
     }
 
@@ -201,7 +164,7 @@ struct CodegClient: Sendable {
             sessionId: sessionId,
             preferredModeId: preferredModeId,
             preferredConfigValues: preferredConfigValues
-        ), session: Self.probeSession)
+        ), session: probeSession)
         return try Self.decodeConnectionID(data)
     }
 
@@ -283,7 +246,7 @@ struct CodegClient: Sendable {
         try await postJSON(
             "acp_describe_agent_options",
             DescribeAgentOptionsBody(agentType: agentType, workingDir: workingDir),
-            session: Self.probeSession
+            session: probeSession
         )
     }
 
@@ -390,7 +353,11 @@ struct CodegClient: Sendable {
     /// body — used for settings objects that must preserve snake_case keys the
     /// shared encoder/decoder would otherwise mangle (e.g. delegation settings).
     func send(_ path: String, rawBody: Data, session: URLSession? = nil) async throws -> Data {
+        guard sessions.pin == nil || baseURL.scheme?.lowercased() == "https" else {
+            throw APIError.invalidURL
+        }
         let session = session ?? self.session
+        let trust = sessions.requestEvaluator()
         let url = baseURL.appendingPathComponent("api").appendingPathComponent(path)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -401,8 +368,11 @@ struct CodegClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request, delegate: trust)
         } catch {
+            if let fingerprint = trust.untrustedFingerprint {
+                throw APIError.untrustedCertificate(fingerprint: fingerprint)
+            }
             throw APIError.fromTransport(error)
         }
 
