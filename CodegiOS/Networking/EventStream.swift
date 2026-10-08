@@ -78,6 +78,7 @@ final class EventStream: @unchecked Sendable {
     enum CloseReason {
         static let keepaliveTimeout = "keepalive timeout"
         static let networkChanged = "network changed"
+        static let endpointChanged = "endpoint changed"
     }
 
     enum Frame: Sendable {
@@ -94,6 +95,9 @@ final class EventStream: @unchecked Sendable {
     private let continuation: AsyncStream<Frame>.Continuation
     private let url: URL
     private let token: String
+    private let customHeaders: [HeaderPair]
+    private let onOutcome: @Sendable (Bool) -> Void
+    var endpointRegistration: ConnectionTransport.Registration?
     private let session: URLSession
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
@@ -117,8 +121,11 @@ final class EventStream: @unchecked Sendable {
         return URLSession(configuration: cfg)
     }()
 
-    init(baseURL: URL, token: String, session: URLSession = EventStream.streamSession) {
+    init(baseURL: URL, token: String, session: URLSession = EventStream.streamSession,
+         customHeaders: [HeaderPair] = [], onOutcome: @escaping @Sendable (Bool) -> Void = { _ in }) {
         self.token = token
+        self.customHeaders = customHeaders
+        self.onOutcome = onOutcome
         self.session = session
         self.url = EventStream.websocketURL(from: baseURL)
         var captured: AsyncStream<Frame>.Continuation!
@@ -129,7 +136,7 @@ final class EventStream: @unchecked Sendable {
     func start() {
         lock.lock()
         guard !isClosed, task == nil else { lock.unlock(); return }
-        let newTask = Self.makeWebSocketTask(session: session, url: url, token: token)
+        let newTask = Self.makeWebSocketTask(session: session, url: url, token: token, customHeaders: customHeaders)
         let monitor = WebSocketHealthMonitor(task: newTask) { [weak self] reason in
             self?.finish(reason: reason)
         }
@@ -151,6 +158,7 @@ final class EventStream: @unchecked Sendable {
     func ping() { lock.withLock { healthMonitor }?.sendPing() }
 
     func close() { shutdown(reason: nil, notify: false) }
+    func close(reason: String) { shutdown(reason: reason, notify: true) }
 
     deinit { close() }
 
@@ -194,6 +202,7 @@ final class EventStream: @unchecked Sendable {
         lock.unlock()
         monitor?.stop()
         t?.cancel(with: .goingAway, reason: nil)
+        if notify && reason != CloseReason.endpointChanged && reason != CloseReason.networkChanged { onOutcome(false) }
         if notify { continuation.yield(.closed(reason: reason)) }
         continuation.finish()
     }
@@ -213,7 +222,7 @@ final class EventStream: @unchecked Sendable {
         // the attach protocol ({type, ...}). Route on which key is present.
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             if let channel = obj["channel"] as? String {
-                if channel == "__ready__" { continuation.yield(.ready) }
+                if channel == "__ready__" { onOutcome(true); continuation.yield(.ready) }
                 return // ignore other legacy global events in Phase 1
             }
             guard obj["type"] is String else { return }
@@ -231,9 +240,13 @@ final class EventStream: @unchecked Sendable {
 
     // MARK: - Helpers
 
-    static func makeWebSocketTask(session: URLSession, url: URL, token: String) -> URLSessionWebSocketTask {
+    static func makeWebSocketTask(session: URLSession, url: URL, token: String,
+                                  customHeaders: [HeaderPair] = []) -> URLSessionWebSocketTask {
         let protocols = ["codeg-events", "codeg-token.\(base64URLNoPad(token))"]
-        let task = session.webSocketTask(with: url, protocols: protocols)
+        var request = URLRequest(url: url)
+        RequestHeaders.apply(customHeaders, to: &request)
+        request.setValue(protocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        let task = session.webSocketTask(with: request)
         task.maximumMessageSize = 64 * 1024 * 1024
         return task
     }

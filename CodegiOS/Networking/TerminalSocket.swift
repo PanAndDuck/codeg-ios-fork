@@ -28,6 +28,9 @@ final class TerminalSocket: @unchecked Sendable {
     private let continuation: AsyncStream<Frame>.Continuation
     private let url: URL
     private let token: String
+    private let customHeaders: [HeaderPair]
+    private let onOutcome: @Sendable (Bool) -> Void
+    var endpointRegistration: ConnectionTransport.Registration?
     private let session: URLSession
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
@@ -37,8 +40,11 @@ final class TerminalSocket: @unchecked Sendable {
     private static let outputPrefix = "terminal://output/"
     private static let exitPrefix = "terminal://exit/"
 
-    init(baseURL: URL, token: String, session: URLSession = EventStream.streamSession) {
+    init(baseURL: URL, token: String, session: URLSession = EventStream.streamSession,
+         customHeaders: [HeaderPair] = [], onOutcome: @escaping @Sendable (Bool) -> Void = { _ in }) {
         self.token = token
+        self.customHeaders = customHeaders
+        self.onOutcome = onOutcome
         self.session = session
         self.url = EventStream.websocketURL(from: baseURL)
         var captured: AsyncStream<Frame>.Continuation!
@@ -49,7 +55,7 @@ final class TerminalSocket: @unchecked Sendable {
     func start() {
         lock.lock()
         guard !isClosed, task == nil else { lock.unlock(); return }
-        let newTask = EventStream.makeWebSocketTask(session: session, url: url, token: token)
+        let newTask = EventStream.makeWebSocketTask(session: session, url: url, token: token, customHeaders: customHeaders)
         let monitor = WebSocketHealthMonitor(task: newTask) { [weak self] reason in
             self?.finish(reason: reason)
         }
@@ -62,6 +68,7 @@ final class TerminalSocket: @unchecked Sendable {
     }
 
     func close() { shutdown(reason: nil, notify: false) }
+    func close(reason: String) { shutdown(reason: reason, notify: true) }
 
     deinit { close() }
 
@@ -98,6 +105,7 @@ final class TerminalSocket: @unchecked Sendable {
         lock.unlock()
         monitor?.stop()
         t?.cancel(with: .goingAway, reason: nil)
+        if notify && reason != CloseReason.endpointChanged && reason != CloseReason.networkChanged { onOutcome(false) }
         if notify { continuation.yield(.closed(reason: reason)) }
         continuation.finish()
     }
@@ -114,6 +122,7 @@ final class TerminalSocket: @unchecked Sendable {
             return  // attach-protocol ({type,…}) or malformed — not ours
         }
         if channel == "__ready__" {
+            onOutcome(true)
             continuation.yield(.ready)
         } else if channel.hasPrefix(Self.outputPrefix) {
             let id = String(channel.dropFirst(Self.outputPrefix.count))

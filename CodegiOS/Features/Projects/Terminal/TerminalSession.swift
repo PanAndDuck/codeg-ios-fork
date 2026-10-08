@@ -152,7 +152,7 @@ final class TerminalSession {
     private func openSocket(id: String) {
         // Guard against a stale bootstrap/reconnect resurrecting a superseded id.
         guard isCurrent(id) else { return }
-        let socket = TerminalSocket(baseURL: client.baseURL, token: client.token, session: client.streamSession)
+        let socket = client.makeTerminalSocket()
         runtime.replaceSocket(socket)
         socket.start()
         // Per-iteration `weak self`: the loop must NOT hold `self` across `await`.

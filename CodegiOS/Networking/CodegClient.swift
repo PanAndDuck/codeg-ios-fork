@@ -1,26 +1,48 @@
 import Foundation
 
-/// HTTP client for a single codeg server. Value type — cheap to create per
-/// request; holds the resolved base URL + bearer token. All endpoints are
-/// `POST /api/<name>`.
+/// Value facade over a shared transport. Existing feature models automatically
+/// use the next endpoint generation without losing conversation/terminal state.
 struct CodegClient: Sendable {
-    let baseURL: URL
-    let token: String
-    private let sessionOverride: URLSession?
-    private let sessions: SessionFactory.Sessions
+    let transport: ConnectionTransport
+    var baseURL: URL { transport.snapshot.baseURL }
+    var token: String { transport.snapshot.token }
+    var customHeaders: [HeaderPair] { transport.snapshot.customHeaders }
 
-    var session: URLSession { sessionOverride ?? sessions[.standard] }
-    var readSession: URLSession { sessionOverride ?? sessions[.read] }
-    var probeSession: URLSession { sessionOverride ?? sessions[.probe] }
-    var installSession: URLSession { sessionOverride ?? sessions[.install] }
-    var streamSession: URLSession { sessionOverride ?? sessions[.stream] }
+    var session: URLSession { transport.snapshot.session(.standard) }
+    var readSession: URLSession { transport.snapshot.session(.read) }
+    var probeSession: URLSession { transport.snapshot.session(.probe) }
+    var installSession: URLSession { transport.snapshot.session(.install) }
+    var streamSession: URLSession { transport.snapshot.session(.stream) }
 
     init(baseURL: URL, token: String, session: URLSession? = nil,
-         sessions: SessionFactory.Sessions? = nil) {
-        self.baseURL = baseURL
-        self.token = token
-        self.sessionOverride = session
-        self.sessions = sessions ?? SessionFactory.Sessions(baseURL: baseURL, pin: nil)
+         sessions: SessionFactory.Sessions? = nil, customHeaders: [HeaderPair] = []) {
+        transport = ConnectionTransport(baseURL: baseURL, token: token, customHeaders: customHeaders,
+                                        sessions: sessions ?? SessionFactory.Sessions(baseURL: baseURL, pin: nil),
+                                        sessionOverride: session)
+    }
+
+    init(transport: ConnectionTransport) { self.transport = transport }
+
+    func makeEventStream() -> EventStream {
+        let snapshot = transport.snapshot
+        let stream = EventStream(baseURL: snapshot.baseURL, token: snapshot.token,
+                                 session: snapshot.session(.stream), customHeaders: snapshot.customHeaders,
+                                 onOutcome: { [transport] success in transport.report(snapshot, source: .webSocket, success: success) })
+        stream.endpointRegistration = transport.register(generation: snapshot.generation) { [weak stream] in
+            stream?.close(reason: EventStream.CloseReason.endpointChanged)
+        }
+        return stream
+    }
+
+    func makeTerminalSocket() -> TerminalSocket {
+        let snapshot = transport.snapshot
+        let socket = TerminalSocket(baseURL: snapshot.baseURL, token: snapshot.token,
+                                    session: snapshot.session(.stream), customHeaders: snapshot.customHeaders,
+                                    onOutcome: { [transport] success in transport.report(snapshot, source: .webSocket, success: success) })
+        socket.endpointRegistration = transport.register(generation: snapshot.generation) { [weak socket] in
+            socket?.close(reason: EventStream.CloseReason.endpointChanged)
+        }
+        return socket
     }
 
     // MARK: - Endpoints
@@ -30,12 +52,12 @@ struct CodegClient: Sendable {
     /// the 30s default — this endpoint normally answers in well under a second,
     /// and it backs the per-server status dots and the editor's Test Connection.
     func health() async throws -> HealthResponse {
-        try await postJSON("health", EmptyBody(), session: readSession)
+        try await postJSON("health", EmptyBody(), kind: .read)
     }
 
     /// All projects/folders known to the server.
     func listFolders() async throws -> [FolderDetail] {
-        try await postJSON("list_all_folder_details", EmptyBody(), session: readSession)
+        try await postJSON("list_all_folder_details", EmptyBody(), kind: .read)
     }
 
     /// Folders shown in the workspace lists: open + `regular` only (the server
@@ -44,7 +66,7 @@ struct CodegClient: Sendable {
     /// — see ``FolderVisibility``. Use ``listFolders()`` (the full set) for by-id
     /// lookups so a conversation in a worktree/chat folder still resolves.
     func listOpenFolders() async throws -> [FolderDetail] {
-        try await postJSON("list_open_folder_details", EmptyBody(), session: readSession)
+        try await postJSON("list_open_folder_details", EmptyBody(), kind: .read)
     }
 
     /// Conversations, optionally filtered by folder / status / search text.
@@ -61,7 +83,7 @@ struct CodegClient: Sendable {
             sortBy: sortBy,
             status: status,
             includeChildren: nil
-        ), session: readSession)
+        ), kind: .read)
     }
 
     /// Default to a small tail even for identity-only reads during a send.
@@ -144,7 +166,7 @@ struct CodegClient: Sendable {
         _ = try await send(
             "clone_repository",
             body: CloneRepositoryBody(url: url, targetDir: targetDir, credentials: credentials),
-            session: probeSession
+            kind: .probe
         )
     }
 
@@ -170,7 +192,7 @@ struct CodegClient: Sendable {
             sessionId: sessionId,
             preferredModeId: preferredModeId,
             preferredConfigValues: preferredConfigValues
-        ), session: probeSession)
+        ), kind: .probe)
         return try Self.decodeConnectionID(data)
     }
 
@@ -252,7 +274,7 @@ struct CodegClient: Sendable {
         try await postJSON(
             "acp_describe_agent_options",
             DescribeAgentOptionsBody(agentType: agentType, workingDir: workingDir),
-            session: probeSession
+            kind: .probe
         )
     }
 
@@ -341,57 +363,80 @@ struct CodegClient: Sendable {
     // extensions in other files (e.g. `CodegClient+Settings.swift`) can reuse the
     // same `POST /api/<name>` transport. The raw-body `send` stays private.
 
-    func postJSON<Req: Encodable, Res: Decodable>(_ path: String, _ body: Req, session: URLSession? = nil) async throws -> Res {
-        let data = try await send(path, body: body, session: session)
+    func postJSON<Req: Encodable, Res: Decodable>(_ path: String, _ body: Req, session: URLSession? = nil,
+                                                kind: SessionFactory.Kind = .standard) async throws -> Res {
+        let data = try await send(path, body: body, session: session, kind: kind)
         do { return try CodegJSON.decoder.decode(Res.self, from: data) }
         catch { throw APIError.decoding(String(describing: error)) }
     }
 
     @discardableResult
-    func send<Req: Encodable>(_ path: String, body: Req, session: URLSession? = nil) async throws -> Data {
+    func send<Req: Encodable>(_ path: String, body: Req, session: URLSession? = nil,
+                              kind: SessionFactory.Kind = .standard) async throws -> Data {
         let encoded: Data
         do { encoded = try CodegJSON.encoder.encode(body) }
         catch { throw APIError.decoding(String(describing: error)) }
-        return try await send(path, rawBody: encoded, session: session)
+        return try await send(path, rawBody: encoded, session: session, kind: kind)
     }
 
     /// Internal (not private) so feature extensions can send a hand-built JSON
     /// body — used for settings objects that must preserve snake_case keys the
     /// shared encoder/decoder would otherwise mangle (e.g. delegation settings).
-    func send(_ path: String, rawBody: Data, session: URLSession? = nil) async throws -> Data {
-        guard sessions.pin == nil || baseURL.scheme?.lowercased() == "https" else {
+    func send(_ path: String, rawBody: Data, session: URLSession? = nil,
+              kind: SessionFactory.Kind = .standard) async throws -> Data {
+        let snapshot = transport.snapshot
+        guard transport.isCurrent(snapshot.generation) else {
+            throw APIError.connectionLost(EventStream.CloseReason.endpointChanged)
+        }
+        guard snapshot.sessions.pin == nil || snapshot.baseURL.scheme?.lowercased() == "https" else {
             throw APIError.invalidURL
         }
-        let session = session ?? self.session
-        let trust = sessions.requestEvaluator()
-        let url = baseURL.appendingPathComponent("api").appendingPathComponent(path)
+        let session = session ?? snapshot.session(kind)
+        let trust = snapshot.sessions.requestEvaluator()
+        let url = snapshot.baseURL.appendingPathComponent("api").appendingPathComponent(path)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(snapshot.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = rawBody
+        RequestHeaders.apply(snapshot.customHeaders, to: &request)
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request, delegate: trust)
+            (data, response) = try await snapshot.sessions.data(for: request, session: session, delegate: trust)
         } catch {
+            guard transport.isCurrent(snapshot.generation) else {
+                throw APIError.connectionLost(EventStream.CloseReason.endpointChanged)
+            }
             if let fingerprint = trust.untrustedFingerprint {
+                transport.report(snapshot, source: .http, success: false)
                 throw APIError.untrustedCertificate(fingerprint: fingerprint)
             }
-            throw APIError.fromTransport(error)
+            let mapped = APIError.fromTransport(error)
+            if !APIError.isCancellation(mapped) { transport.report(snapshot, source: .http, success: false) }
+            throw mapped
+        }
+
+        guard transport.isCurrent(snapshot.generation) else {
+            throw APIError.connectionLost(EventStream.CloseReason.endpointChanged)
         }
 
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Malformed response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw APIError.fromHTTP(
+            let error = APIError.fromHTTP(
                 status: http.statusCode,
                 body: data,
                 retryAfter: http.value(forHTTPHeaderField: "Retry-After")
             )
+            // Auth/validation failures describe a reachable endpoint and must
+            // not trigger repeated failover or replay a mutation.
+            transport.report(snapshot, source: .http, success: !error.isTransient)
+            throw error
         }
+        transport.report(snapshot, source: .http, success: true)
         return data
     }
 

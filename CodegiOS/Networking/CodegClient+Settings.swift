@@ -148,7 +148,7 @@ extension CodegClient {
     // MARK: - Agents
 
     func agentPreflight(agentType: AgentType, forceRefresh: Bool = false) async throws -> PreflightResult {
-        try await postJSON("acp_preflight", AgentPreflightBody(agentType: agentType, forceRefresh: forceRefresh), session: probeSession)
+        try await postJSON("acp_preflight", AgentPreflightBody(agentType: agentType, forceRefresh: forceRefresh), kind: .probe)
     }
 
     /// Replaces the agent's enabled flag, full env map, and model-provider link in
@@ -215,17 +215,17 @@ extension CodegClient {
 
     /// Validate a BYO-pi command/binary path. Not-found is a normal (non-throwing) result.
     func validatePiCommand(_ command: String) async throws -> PiCommandValidation {
-        try await postJSON("acp_validate_pi_command", ValidatePiCommandBody(command: command), session: probeSession)
+        try await postJSON("acp_validate_pi_command", ValidatePiCommandBody(command: command), kind: .probe)
     }
 
     /// Install / uninstall the global `pi` coding-agent binary that pi-acp spawns.
     /// Blocking (long-running → installSession); the iOS UI reconciles via `validatePiCommand`.
     func installPiBinary(taskId: String) async throws {
-        _ = try await send("acp_install_pi_binary", body: TaskIdBody(taskId: taskId), session: installSession)
+        _ = try await send("acp_install_pi_binary", body: TaskIdBody(taskId: taskId), kind: .install)
     }
 
     func uninstallPiBinary(taskId: String) async throws {
-        _ = try await send("acp_uninstall_pi_binary", body: TaskIdBody(taskId: taskId), session: installSession)
+        _ = try await send("acp_uninstall_pi_binary", body: TaskIdBody(taskId: taskId), kind: .install)
     }
 
     // MARK: Install / version management (long-running → installSession)
@@ -236,7 +236,7 @@ extension CodegClient {
     func downloadAgentBinary(agentType: AgentType, taskId: String, version: String? = nil) async throws {
         _ = try await send("acp_download_agent_binary",
                            body: AgentInstallBody(agentType: agentType, taskId: taskId, version: version),
-                           session: installSession)
+                           kind: .install)
     }
 
     /// `npx` distribution install/upgrade. Returns the installed version string.
@@ -246,24 +246,24 @@ extension CodegClient {
         try await postJSON("acp_prepare_npx_agent",
                            PrepareNpxBody(agentType: agentType, registryVersion: registryVersion,
                                           taskId: taskId, cleanFirst: cleanFirst, version: version),
-                           session: installSession)
+                           kind: .install)
     }
 
     /// Installs the `uv` runtime (prereq for `uvx` agents like Hermes).
     func installUvTool(taskId: String) async throws {
-        _ = try await send("acp_install_uv_tool", body: TaskIdBody(taskId: taskId), session: installSession)
+        _ = try await send("acp_install_uv_tool", body: TaskIdBody(taskId: taskId), kind: .install)
     }
 
     func uninstallAgent(agentType: AgentType, taskId: String) async throws {
         _ = try await send("acp_uninstall_agent",
                            body: UninstallAgentBody(agentType: agentType, taskId: taskId),
-                           session: installSession)
+                           kind: .install)
     }
 
     /// Reads the locally-installed version (nil = not installed). Used to reconcile
     /// the UI after an install/uninstall resolves.
     func detectAgentLocalVersion(agentType: AgentType) async throws -> String? {
-        try await postJSON("acp_detect_agent_local_version", AgentTypeBody(agentType: agentType), session: probeSession)
+        try await postJSON("acp_detect_agent_local_version", AgentTypeBody(agentType: agentType), kind: .probe)
     }
 
     // MARK: - Chat Channels

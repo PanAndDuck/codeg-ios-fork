@@ -1135,7 +1135,7 @@ final class SessionDetailViewModel {
         // A new prompt has no local state to replay into. Establish a fresh baseline.
         seqTracker.adoptSnapshot(nil)
         let generation = streamGeneration
-        let newStream = EventStream(baseURL: client.baseURL, token: client.token, session: client.streamSession)
+        let newStream = client.makeEventStream()
         stream = newStream
         newStream.start()
         consumerTask = Task { [weak self] in
@@ -1745,7 +1745,7 @@ final class SessionDetailViewModel {
         closeStream()
         seqTracker.bind(to: conn)
         let generation = streamGeneration
-        let newStream = EventStream(baseURL: client.baseURL, token: client.token, session: client.streamSession)
+        let newStream = client.makeEventStream()
         stream = newStream
         newStream.start()
         consumerTask = Task { [weak self] in

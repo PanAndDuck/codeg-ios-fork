@@ -93,9 +93,10 @@ final class ServerStatusModel {
 
         await withTaskGroup(of: (UUID, ServerStatus?).self) { group in
             for server in servers {
-                let client = store.client(for: server)
-                group.addTask {
-                    await (server.id, Self.probeOne(client))
+                group.addTask { [store] in
+                    await store.prepareEndpoint(for: server)
+                    let client = await store.client(for: server)
+                    return await (server.id, Self.probeOne(client))
                 }
             }
             // Apply each result the moment its own probe resolves, rather than

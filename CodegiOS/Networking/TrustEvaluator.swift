@@ -84,10 +84,14 @@ final class TrustEvaluator: NSObject, URLSessionDelegate, URLSessionTaskDelegate
     }
 
     func allowsRedirect(to url: URL) -> Bool {
-        guard pin != nil else { return true }
-        return url.scheme?.lowercased() == "https"
+        // Authenticated requests may carry proxy credentials even without a
+        // certificate pin. Never forward those headers to another origin.
+        let scheme = baseURL.scheme?.lowercased()
+        let defaultPort = scheme == "https" ? 443 : 80
+        return url.scheme?.lowercased() == scheme
+            && (pin == nil || scheme == "https")
             && url.host?.lowercased() == baseURL.host?.lowercased()
-            && (url.port ?? 443) == (baseURL.port ?? 443)
+            && (url.port ?? defaultPort) == (baseURL.port ?? defaultPort)
             && url.user == nil && url.password == nil
     }
 
