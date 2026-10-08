@@ -35,23 +35,6 @@
         }
       }
     },
-    "Paste from Clipboard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Paste from Clipboard"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "从剪贴板粘贴"
-          }
-        }
-      }
-    },
     "Import pairing code" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -82,23 +65,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "粘贴或输入 codeg 的配对码，也支持服务器 URL 和旧版配对码。"
-          }
-        }
-      }
-    },
-    "No text was pasted. Allow paste access or enter the pairing code manually." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No text was pasted. Allow paste access or enter the pairing code manually."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未粘贴任何文本。请允许粘贴访问，或手动输入配对码。"
           }
         }
       }

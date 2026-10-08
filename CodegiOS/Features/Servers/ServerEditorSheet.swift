@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// Add / Edit Server sheet. Refined grouped-glass sections with clear field
 /// labels, an inline Test Connection probe, and a Save action gated on
@@ -156,15 +155,20 @@ struct ServerEditorSheet: View {
                             .privacySensitive()
                             .focused($focusedField, equals: .pairing)
                             .submitLabel(.done)
-                            .onSubmit { importPairingCode(pairingCode) }
+                            .onSubmit { pairingInput.submit(pairingCode) }
                             .onChange(of: pairingCode) { _, _ in pairingError = nil }
                             .accessibilityIdentifier("pairing.code")
                     }
                     HStack {
-                        Button("Paste from Clipboard") { pastePairingCode() }
+                        PasteButton(payloadType: String.self) { values in
+                            pairingInput.paste(values)
+                        }
+                        .accessibilityLabel("Paste pairing code")
+                        .accessibilityIdentifier("pairing.paste")
                         Spacer()
-                        Button("Import pairing code") { importPairingCode(pairingCode) }
+                        Button("Import pairing code") { pairingInput.submit(pairingCode) }
                             .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("pairing.import")
                     }
                     .font(.subheadline)
                     .tint(Theme.accent)
@@ -367,25 +371,20 @@ struct ServerEditorSheet: View {
 
     // MARK: - Actions
 
-    private func pastePairingCode() {
-        // Read only in response to this tap; iOS owns cross-app paste permission.
-        guard let code = UIPasteboard.general.string,
-              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            pairingError = "No text was pasted. Allow paste access or enter the pairing code manually."
-            return
-        }
-        importPairingCode(code)
+    private var pairingInput: PairingCodeInput {
+        PairingCodeInput(importCode: importPairingCode)
     }
 
-    private func importPairingCode(_ code: String) {
+    private func importPairingCode(_ code: String) -> Bool {
         focusedField = nil
         guard model.applyPairingCode(code) else {
             pairingError = model.scanError
-            return
+            return false
         }
         pairingCode = ""
         pairingError = nil
         showPairingInput = false
+        return true
     }
 
     private func trustCertificate(replacingPin: Bool = false) {
