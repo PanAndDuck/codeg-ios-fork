@@ -1,6 +1,15 @@
 import SwiftUI
 import Observation
 
+/// Cancels the independent folder read when its screen is released. Keeping
+/// ownership here avoids accessing main-actor state from the model's deinit.
+private final class SessionFolderLookup {
+    var task: Task<Void, Never>? {
+        willSet { task?.cancel() }
+    }
+    deinit { task?.cancel() }
+}
+
 /// Drives the session detail screen: loads the transcript, sends prompts, and
 /// consumes the live ACP event stream — mapping each event onto the in-flight
 /// assistant turn. All mutable UI state lives here on the main actor, so there
@@ -294,6 +303,105 @@ final class SessionDetailViewModel {
     /// Guards the one-time draft option load so a re-run of `.task` can't refetch.
     private var didLoadDraftOptions = false
 
+    private var loadedWindow: ConversationDetail?
+    private var windowRevision = 0
+    private var detailFetchGeneration = 0
+    @ObservationIgnored private let folderLookup = SessionFolderLookup()
+    private(set) var isLoadingEarlierTurns = false
+    private(set) var earlierTurnsError: String?
+    /// A compaction reset must also reset the view's local render window.
+    private(set) var historyResetTick = 0
+    var hasEarlierTurns: Bool { loadedWindow?.hasEarlierTurns == true }
+
+    private var transcriptTotal: Int {
+        max(loadedWindow?.totalTurns ?? 0, (loadedWindow?.loadedTurnsOffset ?? 0) + turns.count)
+    }
+
+    /// Fetch outside the main actor via CodegClient's async transport/decoder.
+    /// A page may prepend while the request is in flight; retry from its new
+    /// offset rather than silently discarding that newly loaded history.
+    private func fetchWindowedDetail(id: Int, forceTail: Bool = false) async throws -> ConversationDetail {
+        detailFetchGeneration &+= 1
+        let generation = detailFetchGeneration
+        while true {
+            try Task.checkCancellation()
+            let revision = windowRevision
+            let current = loadedWindow
+            let selector: ConversationTurnWindow
+            if !forceTail, let current, current.isWindowed {
+                selector = .fromIndex(current.loadedTurnsOffset)
+            } else {
+                selector = .tail(60)
+            }
+            var detail = try await withNetworkRetry { try await client.conversationDetail(id: id, window: selector) }
+            guard generation == detailFetchGeneration else { throw CancellationError() }
+            if revision != windowRevision { continue }
+            if !forceTail, TurnWindowMerger.refreshing(detail, current: current) == nil {
+                detail = try await withNetworkRetry { try await client.conversationDetail(id: id, window: .tail(60)) }
+                guard generation == detailFetchGeneration else { throw CancellationError() }
+                if revision != windowRevision { continue }
+            }
+            return detail
+        }
+    }
+
+    private func adoptTranscript(_ detail: ConversationDetail, prepending: Bool = false) {
+        if !prepending, TurnWindowMerger.refreshing(detail, current: loadedWindow) == nil {
+            historyResetTick &+= 1
+        }
+        loadedWindow = detail
+        windowRevision &+= 1
+        turns = detail.turns
+        earlierTurnsError = nil
+    }
+
+    /// Folder-dependent controls fill in independently of the transcript. Keep
+    /// previous folder data on failure and retry on the next foreground sync.
+    private func refreshFoldersLazily() {
+        let client = client
+        folderLookup.task = Task { [weak self] in
+            guard let folders = try? await withNetworkRetry({ try await client.listFolders() }),
+                  !Task.isCancelled, let self else { return }
+            self.allFolders = folders
+            self.folder = folders.first { $0.id == self.summary?.folderId }
+            self.currentBranch = self.summary?.gitBranch ?? self.folder?.gitBranch
+        }
+    }
+
+    func loadEarlierTurns() async {
+        guard !isLoadingEarlierTurns, let id = conversationID,
+              var current = loadedWindow, current.hasEarlierTurns else { return }
+        isLoadingEarlierTurns = true
+        earlierTurnsError = nil
+        defer { isLoadingEarlierTurns = false }
+        let revision = windowRevision
+        do {
+            let page = try await withNetworkRetry {
+                try await client.conversationTurns(id: id, beforeIndex: current.loadedTurnsOffset, limit: 60)
+            }
+            guard !Task.isCancelled, revision == windowRevision else { return }
+            // Preserve any locally promoted reply while older history is loading.
+            current.turns = turns
+            let version = turnsVersion
+            let snapshot = current
+            let merged = await Task.detached(priority: .userInitiated) {
+                TurnWindowMerger.prepending(page, to: snapshot)
+            }.value
+            guard !Task.isCancelled, revision == windowRevision, version == turnsVersion else { return }
+            if let merged {
+                adoptTranscript(merged, prepending: true)
+            } else {
+                let tail = try await fetchWindowedDetail(id: id, forceTail: true)
+                historyResetTick &+= 1
+                adoptTranscript(tail)
+                summary = tail.summary
+                sessionStats = tail.sessionStats ?? sessionStats
+            }
+        } catch {
+            if !Task.isCancelled, !(error is CancellationError) { earlierTurnsError = Self.describe(error) }
+        }
+    }
+
     func load() async {
         switch mode {
         case .existing(let id):
@@ -316,17 +424,14 @@ final class SessionDetailViewModel {
     /// the loading spinner first) and `refreshOnForeground()` (which does not, so
     /// resuming the app doesn't flash the transcript away and back).
     private func syncExisting(id: Int, stickToBottom: Bool) async {
+        refreshFoldersLazily()
         do {
-            async let detailReq = client.conversationDetail(id: id)
-            async let foldersReq = client.listFolders()
-            let detail = try await detailReq
-            let folders = try await foldersReq
+            let detail = try await fetchWindowedDetail(id: id)
 
             summary = detail.summary
-            turns = detail.turns
+            adoptTranscript(detail)
             sessionStats = detail.sessionStats
-            allFolders = folders
-            folder = folders.first { $0.id == detail.summary.folderId }
+            folder = allFolders.first { $0.id == detail.summary.folderId }
             currentBranch = detail.summary.gitBranch ?? folder?.gitBranch
             insertModel.agentType = detail.summary.agentType
             phase = .loaded
@@ -357,7 +462,7 @@ final class SessionDetailViewModel {
             // on screen (better than replacing a working view with an error for a
             // transient network blip); the initial `load()` path, which has nothing
             // to fall back to, is the one that needs `phase = .failed`.
-            if phase != .loaded {
+            if phase != .loaded, !(error is CancellationError), !Task.isCancelled {
                 phase = .failed(Self.describe(error))
             }
         }
@@ -1181,10 +1286,10 @@ final class SessionDetailViewModel {
     /// started locally — that path owns the transcript.
     private func reconcileAfterMissedLive() async {
         guard let id = conversationID, liveTurn == nil, !isInFlight, stream == nil else { return }
-        guard let detail = try? await client.conversationDetail(id: id) else { return }
+        guard let detail = try? await fetchWindowedDetail(id: id) else { return }
         guard liveTurn == nil, !isInFlight, stream == nil else { return }
         summary = detail.summary
-        turns = detail.turns
+        adoptTranscript(detail)
         sessionStats = detail.sessionStats ?? sessionStats
         requestStickToBottom()
     }
@@ -1611,16 +1716,16 @@ final class SessionDetailViewModel {
         guard liveTurn === live, isTurnActive else { return }
         streamReconnects = 0
         if let id = conversationID,
-           let detail = try? await client.conversationDetail(id: id),
+           let detail = try? await fetchWindowedDetail(id: id),
            liveTurn === live, isTurnActive {
             summary = detail.summary
             sessionStats = detail.sessionStats ?? sessionStats
             // Adopt only a transcript that genuinely advanced past our pre-turn
             // baseline AND ends with a real reply — never a stale read.
-            if detail.turns.count > turns.count, Self.transcriptHasReply(detail.turns) {
+            if detail.totalTurns > transcriptTotal, Self.transcriptHasReply(detail.turns) {
                 isTurnActive = false
                 clearInteractivePrompts()
-                turns = detail.turns
+                adoptTranscript(detail)
                 pendingUserTurns.removeAll()
                 liveTurn = nil
                 sendState = .idle
@@ -1742,7 +1847,7 @@ final class SessionDetailViewModel {
         // turn's assistant reply would satisfy `transcriptHasReply` and we'd adopt
         // it, dropping the reply we just streamed. `turns` isn't mutated elsewhere
         // between finalize and this reconcile.
-        let baselineCount = turns.count
+        let baselineCount = transcriptTotal
 
         for attempt in 0..<5 {
             // If the user started another turn while we were reconciling, that
@@ -1750,7 +1855,7 @@ final class SessionDetailViewModel {
             // don't wipe its in-flight state (its own finalize reconciles later).
             guard liveTurn === live else { return }
             do {
-                let detail = try await client.conversationDetail(id: id)
+                let detail = try await fetchWindowedDetail(id: id)
                 // Re-check after the await — a new turn may have begun during it.
                 guard liveTurn === live else { return }
                 // Identity/stats are always safe to adopt, even before the reply
@@ -1763,9 +1868,9 @@ final class SessionDetailViewModel {
                 // merely ends with an older reply can't masquerade as ours) and —
                 // when there's a streamed reply to protect — end with a non-empty
                 // assistant turn.
-                let advanced = detail.turns.count > baselineCount
+                let advanced = detail.totalTurns > baselineCount
                 if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
-                    turns = detail.turns
+                    adoptTranscript(detail)
                     pendingUserTurns.removeAll()
                     liveTurn = nil
                     requestScrollToBottom()
