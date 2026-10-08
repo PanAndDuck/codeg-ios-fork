@@ -12,6 +12,29 @@ import Security
 enum Keychain {
     private static let service = "com.codeg.ios.server-token"
 
+    struct Credentials: Codable {
+        let token: String
+        let customHeaders: [HeaderPair]
+    }
+
+    static func credentials(for id: UUID) -> Credentials? {
+        if let encoded = secret(account: id.uuidString + ".credentials") {
+            // A damaged new item must not silently revive stale credentials.
+            return try? JSONDecoder().decode(Credentials.self, from: Data(encoded.utf8))
+        }
+        return secret(account: id.uuidString).map { Credentials(token: $0, customHeaders: []) }
+    }
+
+    @discardableResult
+    static func setCredentials(token: String, customHeaders: [HeaderPair], for id: UUID) -> Bool {
+        guard let data = try? JSONEncoder().encode(Credentials(token: token, customHeaders: customHeaders)),
+              let encoded = String(data: data, encoding: .utf8),
+              setSecret(encoded, account: id.uuidString + ".credentials") else { return false }
+        // The new item contains both secrets atomically; only now remove legacy.
+        deleteSecret(account: id.uuidString)
+        return true
+    }
+
     #if targetEnvironment(simulator)
     private static let fallbackPrefix = "codeg.token.fallback."
     private static var fallback: UserDefaults { .standard }
@@ -23,13 +46,16 @@ enum Keychain {
     /// surface it instead of silently saving a server whose token was lost.
     @discardableResult
     static func setToken(_ token: String, for id: UUID) -> Bool {
-        let account = id.uuidString
+        setCredentials(token: token, customHeaders: credentials(for: id)?.customHeaders ?? [], for: id)
+    }
+
+    private static func setSecret(_ secret: String, account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        let data = Data(token.utf8)
+        let data = Data(secret.utf8)
 
         // Add first; on a pre-existing item, update it in place. This avoids the
         // destructive delete-then-add window where a failed add after a
@@ -59,7 +85,7 @@ enum Keychain {
         // SecItem* returns errSecMissingEntitlement (-34018). ONLY in that exact
         // case do we degrade to a UserDefaults copy so the simulator stays usable.
         if status == errSecMissingEntitlement {
-            fallback.set(token, forKey: fallbackPrefix + account)
+            fallback.set(secret, forKey: fallbackPrefix + account)
             return true
         }
         #endif
@@ -70,10 +96,14 @@ enum Keychain {
     }
 
     static func token(for id: UUID) -> String? {
+        credentials(for: id)?.token
+    }
+
+    private static func secret(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: id.uuidString,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -83,7 +113,7 @@ enum Keychain {
             return token
         }
         #if targetEnvironment(simulator)
-        return fallback.string(forKey: fallbackPrefix + id.uuidString)
+        return fallback.string(forKey: fallbackPrefix + account)
         #else
         // No plaintext fallback exists on device — a Keychain miss means no token.
         return nil
@@ -92,14 +122,21 @@ enum Keychain {
 
     @discardableResult
     static func deleteToken(for id: UUID) -> Bool {
+        let current = deleteSecret(account: id.uuidString + ".credentials")
+        let legacy = deleteSecret(account: id.uuidString)
+        return current && legacy
+    }
+
+    @discardableResult
+    private static func deleteSecret(account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: id.uuidString,
+            kSecAttrAccount as String: account,
         ]
         let status = SecItemDelete(query as CFDictionary)
         #if targetEnvironment(simulator)
-        fallback.removeObject(forKey: fallbackPrefix + id.uuidString)
+        fallback.removeObject(forKey: fallbackPrefix + account)
         #endif
         return status == errSecSuccess || status == errSecItemNotFound
     }
