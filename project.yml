@@ -115,6 +115,19 @@ targets:
         # XcodeGen otherwise uses the target name instead of PRODUCT_NAME.
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Codeg.app/Codeg"
 
+  CodegiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: CodegiOSUITests
+    dependencies:
+      - target: CodegiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(CODEG_BUNDLE_ID).uitests"
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_TARGET_NAME: CodegiOS
+
 schemes:
   CodegiOS:
     build:
@@ -123,3 +136,11 @@ schemes:
     test:
       targets:
         - CodegiOSTests
+  E1bUI:
+    build:
+      targets:
+        CodegiOS: all
+        CodegiOSUITests: [test]
+    test:
+      targets:
+        - CodegiOSUITests
