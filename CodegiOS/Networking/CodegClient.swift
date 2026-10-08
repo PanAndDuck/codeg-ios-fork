@@ -35,7 +35,8 @@ struct CodegClient: Sendable {
         return URLSession(configuration: cfg)
     }()
 
-    /// Longer-timeout session for slow server operations: `acp_describe_agent_options`
+    /// Longer-timeout session for slow server operations: `acp_connect` can spend
+    /// up to 60s resuming an agent, `acp_describe_agent_options`
     /// spawns a probe agent (up to ~60s to come up), and `clone_repository` runs a
     /// full `git clone` that can take a while. The 30s default would abort either.
     static let probeSession: URLSession = {
@@ -200,7 +201,7 @@ struct CodegClient: Sendable {
             sessionId: sessionId,
             preferredModeId: preferredModeId,
             preferredConfigValues: preferredConfigValues
-        ))
+        ), session: Self.probeSession)
         return try Self.decodeConnectionID(data)
     }
 
@@ -402,22 +403,17 @@ struct CodegClient: Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            throw APIError.transport((error as? URLError)?.localizedDescription ?? error.localizedDescription)
+            throw APIError.fromTransport(error)
         }
 
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Malformed response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw APIError.unauthorized }
-            let parsed = try? CodegJSON.decoder.decode(ServerError.self, from: data)
-            if http.statusCode == 409 || parsed?.code == "turn_in_progress" {
-                throw APIError.turnInProgress
-            }
-            throw APIError.server(
+            throw APIError.fromHTTP(
                 status: http.statusCode,
-                code: parsed?.code,
-                message: parsed?.message ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+                body: data,
+                retryAfter: http.value(forHTTPHeaderField: "Retry-After")
             )
         }
         return data
@@ -494,14 +490,14 @@ extension CodegClient {
             return ServerSnapshotLoad(folders: nil, openFolders: nil, conversations: nil, message: nil, cancelled: true)
         }
 
-        let firstError = folders.failureError ?? openFolders.failureError ?? conversations.failureError
-        let message = firstError.map { ($0 as? LocalizedError)?.errorDescription ?? $0.localizedDescription }
+        let errors = [folders.failureError, openFolders.failureError, conversations.failureError].compactMap { $0 }
+        let message = errors.compactMap { APIError.userMessage($0) }.first
         return ServerSnapshotLoad(
             folders: try? folders.get(),
             openFolders: try? openFolders.get(),
             conversations: try? conversations.get(),
             message: message,
-            cancelled: false
+            cancelled: errors.count == 3 && errors.allSatisfy(APIError.isCancellation)
         )
     }
 
