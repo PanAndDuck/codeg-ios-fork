@@ -134,6 +134,7 @@ struct SessionDetailView: View {
             }
         }
         .task { await model.load() }
+        .onAppear { model.screenDidAppear() }
         .onDisappear { model.teardown() }
         // The live WebSocket is suspended (and often killed outright) while
         // backgrounded, so returning here otherwise leaves a frozen transcript
@@ -149,9 +150,13 @@ struct SessionDetailView: View {
             switch new {
             case .background:
                 wasBackgrounded = true
-            case .active where wasBackgrounded:
-                wasBackgrounded = false
-                Task { await model.refreshOnForeground() }
+            case .active:
+                if wasBackgrounded {
+                    wasBackgrounded = false
+                    Task { await model.refreshOnForeground() }
+                } else {
+                    model.retryRecoveryNow()
+                }
             default:
                 break
             }
@@ -251,6 +256,21 @@ struct SessionDetailView: View {
             // compose bar, which silently ate the tap). It is horizontally centered
             // and only present while the user has scrolled up.
             VStack(spacing: 0) {
+                if model.isReconnecting {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Reconnecting… (\(model.reconnectAttempt))")
+                            .font(.caption)
+                        Spacer(minLength: 0)
+                        if model.showsRecoveryBanner {
+                            Button("Retry now") { model.retryRecoveryNow() }
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                    .padding(12)
+                    .background(.regularMaterial)
+                    .accessibilityElement(children: .contain)
+                }
                 // Interactive prompt cards sit above everything in the inset: the
                 // agent has paused and the user's next action is to respond here.
                 // Fade only (no geometry transition) so the buttons' hit regions

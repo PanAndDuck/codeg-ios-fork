@@ -229,10 +229,11 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     let pendingPermission: PendingPermissionSnapshot?
     let pendingQuestion: PendingQuestionSnapshot?
     let pendingPlanApproval: PendingPlanApprovalSnapshot?
+    let pendingUserMessage: PendingUserMessageSnapshot?
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
-        case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
+        case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval, pendingUserMessage
     }
 
     init(from decoder: Decoder) throws {
@@ -248,7 +249,13 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         pendingPermission = (try? c.decodeIfPresent(PendingPermissionSnapshot.self, forKey: .pendingPermission)) ?? nil
         pendingQuestion = (try? c.decodeIfPresent(PendingQuestionSnapshot.self, forKey: .pendingQuestion)) ?? nil
         pendingPlanApproval = (try? c.decodeIfPresent(PendingPlanApprovalSnapshot.self, forKey: .pendingPlanApproval)) ?? nil
+        pendingUserMessage = try c.decodeIfPresent(PendingUserMessageSnapshot.self, forKey: .pendingUserMessage)
     }
+}
+
+struct PendingUserMessageSnapshot: Sendable, Decodable {
+    let messageId: String
+    let blocks: [UserMessageBlock]
 }
 
 /// In-flight assistant message carried by a snapshot (Rust `LiveMessage`).
