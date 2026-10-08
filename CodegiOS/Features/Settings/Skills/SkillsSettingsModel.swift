@@ -11,6 +11,7 @@ final class SkillsSettingsModel {
 
     private(set) var phase: Phase = .loading
     private(set) var agents: [AgentType] = []
+    private(set) var agentNames = AgentDisplayNames()
     private(set) var selectedAgent: AgentType?
     private(set) var result: AgentSkillsListResult?
     /// The agent `result` actually belongs to — mutations target THIS, not
@@ -32,6 +33,7 @@ final class SkillsSettingsModel {
         if agents.isEmpty { phase = .loading }
         do {
             let list = try await client.listAgents()
+            agentNames = AgentDisplayNames(agents: list)
             agents = list.filter { $0.available && $0.enabled }
                 .sorted { $0.sortOrder < $1.sortOrder }
                 .map(\.agentType)

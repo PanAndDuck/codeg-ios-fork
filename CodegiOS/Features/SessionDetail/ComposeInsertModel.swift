@@ -278,6 +278,8 @@ final class ComposeInsertModel {
     /// the inserted badge.
     func draftInsertingAgentMention(_ agent: AcpAgentInfo, to draft: String, cursor: String.Index? = nil) -> (draft: String, cursorUTF16Offset: Int) {
         let cursor = cursor ?? draft.endIndex
+        // Desktop adapters.ts interpolates the wire token verbatim: the colon
+        // in `custom:<id>` must remain literal, not become `%3A`.
         let badge = "[@\(agent.name)](codeg://agent/\(agent.agentType.rawValue)) "
         let head: String
         if let found = trailingMentionToken(in: draft, upTo: cursor) {

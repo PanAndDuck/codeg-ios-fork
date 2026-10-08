@@ -15,6 +15,28 @@ final class SessionWindowLoadTests: XCTestCase {
     }
 
     @MainActor
+    func testBuiltInSessionLoadsCatalogForCustomDelegationNames() async throws {
+        let payload = try WindowFixtures.detail(ids: ["latest"])
+        let catalog = Data(#"[{"agent_type":"custom:e2e-mock","registry_id":"e2e-mock","name":"E2E scripted mock","description":"Fixture","enabled":true,"available":true,"sort_order":0}]"#.utf8)
+        WindowURLProtocol.respond = { request, _ in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "acp_list_agents": return (200, catalog)
+            default: return (200, payload)
+            }
+        }
+        let model = makeModel()
+        defer { model.teardown() }
+        await model.load()
+        XCTAssertEqual(model.summary?.agentType, .claudeCode)
+        for _ in 0..<100 where model.insertModel.matchingAgents(for: "E2E").isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.agentNames.name(for: .custom("custom:e2e-mock")), "E2E scripted mock")
+        XCTAssertEqual(model.insertModel.matchingAgents(for: "E2E").map(\.agentType.rawValue), ["custom:e2e-mock"])
+    }
+
+    @MainActor
     func testFolderFailureDoesNotFailTranscriptAndDetailRetries() async throws {
         let payload = try WindowFixtures.detail(ids: ["latest"], offset: 60, total: 61, hash: "seam")
         WindowURLProtocol.respond = { request, attempt in

@@ -7,6 +7,7 @@ import SwiftUI
 struct SessionHeaderView: View {
     let summary: ConversationSummary
     let stats: SessionStats?
+    var agentNames = AgentDisplayNames()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,7 +23,7 @@ struct SessionHeaderView: View {
 
             // Meta row: agent · model · branch
             HStack(spacing: 8) {
-                AgentBadge(agent: summary.agentType)
+                AgentBadge(agent: summary.agentType, names: agentNames)
                 if let model = summary.model, !model.isEmpty {
                     MetaChip(symbol: "cpu", text: model, mono: true)
                 }

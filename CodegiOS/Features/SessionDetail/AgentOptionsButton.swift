@@ -5,6 +5,7 @@ import SwiftUI
 /// where the agent/folder are fixed and only Mode/config can change.
 struct NewSessionAgentConfig {
     let availableAgents: [AgentType]
+    var agentNames = AgentDisplayNames()
     let selectedAgent: AgentType
     let onSelectAgent: (AgentType) -> Void
     let availableFolders: [FolderDetail]
@@ -167,7 +168,7 @@ private struct AgentOptionsSheet: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(ns.availableAgents) { agent in
-                        agentChoice(agent, isSelected: agent == ns.selectedAgent) {
+                        agentChoice(agent, names: ns.agentNames, isSelected: agent == ns.selectedAgent) {
                             ns.onSelectAgent(agent)
                             // Reload this agent's options + working dir in place.
                             options.prepare(agentType: agent, workingDir: ns.selectedFolder?.path)
@@ -201,7 +202,7 @@ private struct AgentOptionsSheet: View {
         endPoint: .trailing
     )
 
-    private func agentChoice(_ agent: AgentType, isSelected: Bool, onSelect: @escaping () -> Void) -> some View {
+    private func agentChoice(_ agent: AgentType, names: AgentDisplayNames, isSelected: Bool, onSelect: @escaping () -> Void) -> some View {
         Button(action: onSelect) {
             VStack(spacing: 6) {
                 AgentAvatar(agent: agent, size: 46)
@@ -209,7 +210,7 @@ private struct AgentOptionsSheet: View {
                     // The selected agent sits at full size; the rest recede slightly,
                     // so switching animates a gentle pop (paired with the ring).
                     .scaleEffect(isSelected ? 1 : 0.92)
-                Text(agent.shortName)
+                Text(names.name(for: agent, abbreviated: true))
                     .font(.caption2.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
@@ -218,7 +219,7 @@ private struct AgentOptionsSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(agent.displayName)\(isSelected ? ", selected" : "")")
+        .accessibilityLabel("\(names.name(for: agent))\(isSelected ? ", selected" : "")")
     }
 
     // MARK: - Workspace (folder + branch in one card)

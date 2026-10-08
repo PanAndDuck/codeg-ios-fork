@@ -11,6 +11,7 @@ struct SkillEditorSheet: View {
 
     let mode: Mode
     let agent: AgentType
+    let agentName: String
     let loadContent: (AgentSkillItem) async throws -> String
     let onSave: (_ skillId: String, _ scope: AgentSkillScope, _ content: String, _ layout: AgentSkillLayout?) async throws -> Void
 
@@ -24,11 +25,13 @@ struct SkillEditorSheet: View {
     init(
         mode: Mode,
         agent: AgentType,
+        agentName: String,
         loadContent: @escaping (AgentSkillItem) async throws -> String,
         onSave: @escaping (String, AgentSkillScope, String, AgentSkillLayout?) async throws -> Void
     ) {
         self.mode = mode
         self.agent = agent
+        self.agentName = agentName
         self.loadContent = loadContent
         self.onSave = onSave
         switch mode {
@@ -167,8 +170,8 @@ struct SkillEditorSheet: View {
         // stay English inside a translated sentence; the agent name is verbatim.
         let scopeWord: LocalizedStringKey = scope == .global ? "Global" : "Project"
         return existing != nil
-            ? "\(Text(scopeWord)) skill for \(agent.displayName)."
-            : "New global skill for \(agent.displayName)."
+            ? "\(Text(scopeWord)) skill for \(agentName)."
+            : "New global skill for \(agentName)."
     }
 
     private func loadIfNeeded() async {

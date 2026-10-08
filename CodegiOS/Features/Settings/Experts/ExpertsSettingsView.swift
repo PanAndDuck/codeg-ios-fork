@@ -60,7 +60,7 @@ struct ExpertsSettingsView: View {
                             .padding(.leading, 4)
                         ForEach(group.items) { expert in
                             NavigationLink {
-                                ExpertDetailView(expert: expert, agents: model.agents, client: client)
+                                ExpertDetailView(expert: expert, agents: model.agents, agentNames: model.agentNames, client: client)
                             } label: {
                                 ExpertRow(expert: expert)
                             }

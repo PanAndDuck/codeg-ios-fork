@@ -1,29 +1,74 @@
 import SwiftUI
 
-/// The coding agents codeg can drive. Wire value is snake_case (serde
-/// `rename_all = "snake_case"` on the Rust `AgentType` enum). Enum *values*
-/// are unaffected by the decoder's key strategy, so raw values match directly.
-enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
-    case claudeCode = "claude_code"
-    case codex = "codex"
-    case openCode = "open_code"
-    case gemini = "gemini"
-    case openClaw = "open_claw"
-    case cline = "cline"
-    case hermes = "hermes"
-    case codeBuddy = "code_buddy"
-    case kimiCode = "kimi_code"
-    case pi = "pi"
-    case grok = "grok"
-    case cursor = "cursor"
+/// Agent identity is the server's exact wire token, including `custom:<id>`
+/// and types introduced after this client shipped. Never substitute another
+/// agent: these values also drive requests, mentions and preference keys.
+enum AgentType: RawRepresentable, Codable, CaseIterable, Hashable, Sendable, Identifiable {
+    case claudeCode, codex, openCode, gemini, openClaw, cline
+    case hermes, codeBuddy, kimiCode, pi, grok, cursor
+    /// Associated values contain the FULL wire token, including `custom:`.
+    case custom(String)
+    case unknown(String)
+
+    /// Offline fallback only; custom/unknown choices come from the API catalog.
+    static let allCases: [AgentType] = [
+        .claudeCode, .codex, .openCode, .gemini, .openClaw, .cline,
+        .hermes, .codeBuddy, .kimiCode, .pi, .grok, .cursor,
+    ]
+
+    init(rawValue: String) {
+        switch rawValue {
+        case "claude_code": self = .claudeCode
+        case "codex": self = .codex
+        case "open_code": self = .openCode
+        case "gemini": self = .gemini
+        case "open_claw": self = .openClaw
+        case "cline": self = .cline
+        case "hermes": self = .hermes
+        case "code_buddy": self = .codeBuddy
+        case "kimi_code": self = .kimiCode
+        case "pi": self = .pi
+        case "grok": self = .grok
+        case "cursor": self = .cursor
+        default: self = rawValue.hasPrefix("custom:") ? .custom(rawValue) : .unknown(rawValue)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .claudeCode: return "claude_code"
+        case .codex: return "codex"
+        case .openCode: return "open_code"
+        case .gemini: return "gemini"
+        case .openClaw: return "open_claw"
+        case .cline: return "cline"
+        case .hermes: return "hermes"
+        case .codeBuddy: return "code_buddy"
+        case .kimiCode: return "kimi_code"
+        case .pi: return "pi"
+        case .grok: return "grok"
+        case .cursor: return "cursor"
+        case .custom(let raw), .unknown(let raw): return raw
+        }
+    }
+
+    var isBuiltIn: Bool {
+        switch self {
+        case .custom, .unknown: return false
+        default: return true
+        }
+    }
 
     var id: String { rawValue }
 
-    /// Decodes unknown future agent types to `.claudeCode` rather than throwing,
-    /// so one new server-side agent can't break the whole list decode.
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        self = AgentType(rawValue: raw) ?? .claudeCode
+        self.init(rawValue: raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 
     var displayName: String {
@@ -40,6 +85,10 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .custom(let raw):
+            let name = String(raw.dropFirst("custom:".count))
+            return name.isEmpty ? "Custom agent" : name
+        case .unknown(let raw): return raw.isEmpty ? "Unknown agent" : raw
         }
     }
 
@@ -58,6 +107,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .custom, .unknown: return displayName
         }
     }
 
@@ -76,13 +126,14 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "pi"
         case .grok: return "line.diagonal"
         case .cursor: return "cursorarrow"
+        case .custom, .unknown: return "questionmark.circle"
         }
     }
 
     /// Name of the brand-icon image set in `Assets.xcassets` (the per-agent SVGs
     /// ported verbatim from the web client's `agent-icon.tsx`). Rendered by
     /// `AgentIcon`.
-    var iconAsset: String {
+    var iconAsset: String? {
         switch self {
         case .claudeCode: return "AgentClaudeCode"
         case .codex: return "AgentCodex"
@@ -96,6 +147,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "AgentPi"
         case .grok: return "AgentGrok"
         case .cursor: return "AgentCursor"
+        case .custom, .unknown: return nil
         }
     }
 
@@ -105,7 +157,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
     /// colors/gradients and render as-is.
     var iconIsTemplate: Bool {
         switch self {
-        case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor: return true
+        case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor, .custom, .unknown: return true
         case .claudeCode, .codex, .gemini, .openClaw, .kimiCode, .pi: return false
         }
     }
@@ -130,6 +182,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         // Cursor's cube mark is monochrome too (web renders it at plain
         // `text-foreground`), so it gets the same appearance-following tint.
         case .cursor: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
+        case .custom, .unknown: return Color(light: Color(white: 0.35), dark: Color(white: 0.75))
         }
     }
 }

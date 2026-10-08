@@ -58,10 +58,11 @@ enum DelegationModel {
         guard let obj = CompanionDetect.unwrapArgs(CompanionJSON.object(from: raw)) else {
             return DelegationParsedInput()
         }
-        // Validate the agent via the FAILABLE initializer (unknown → nil); the
-        // throwing `Decodable` init defaults unknown agents to `.claudeCode`,
-        // which would mislabel every unrecognized agent.
-        let agent = (obj["agent_type"] as? String).flatMap { AgentType(rawValue: $0) }
+        // Tool input can contain newer server types too. Keep their identity;
+        // absent/empty values retain the generic "Sub-agent" presentation.
+        let agent = (obj["agent_type"] as? String).flatMap {
+            $0.isEmpty ? nil : AgentType(rawValue: $0)
+        }
         return DelegationParsedInput(
             agentType: agent,
             task: (obj["task"] as? String),

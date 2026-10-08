@@ -626,6 +626,7 @@ struct AgentConfigSection: View {
         case .cursor:     CursorConfigSection(draft: $draft, client: client)
         case .kimiCode:   KimiConfigSection(model: model, agent: agent, client: client)
         case .pi:         PiConfigSection(model: model, agent: agent, client: client)
+        case .custom, .unknown: EmptyView()
         }
     }
 }
@@ -651,4 +652,3 @@ private struct FlowFixButtons: View {
         }
     }
 }
-
