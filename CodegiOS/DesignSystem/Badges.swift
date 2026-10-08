@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// The currently selected transport for a logical server.
+struct EndpointBadge: View {
+    let label: String
+
+    var body: some View {
+        Text(verbatim: label)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Theme.textSecondary.opacity(0.10), in: Capsule())
+            .accessibilityLabel(Text("Active endpoint: \(label)"))
+    }
+}
+
 /// Circular agent avatar showing the per-agent brand icon.
 struct AgentAvatar: View {
     let agent: AgentType

@@ -46,6 +46,7 @@ struct RootView: View {
         .environment(language)
         .environment(\.locale, language.locale)
         .preferredColorScheme(appearance.mode.colorScheme)
+        .task { model.serverStore.startEndpointMonitoring() }
         .onOpenURL { model.handle(url: $0) }
         .onChange(of: horizontalSizeClass, initial: true) { _, size in
             model.isCompact = size == .compact
@@ -326,12 +327,14 @@ struct RootView: View {
            let client = model.serverStore.client(for: server),
            let pending = model.pendingNewSession {
             SessionDetailView(server: server, client: client, newSession: pending,
+                              activeEndpointLabel: model.serverStore.endpointLabel(for: server),
                               onOpenSession: { model.open(.newSession($0)) })
                 .id("\(server.connectionIdentity)|\(pending.id)")
         } else if let server = model.selectedServer,
                   let client = model.serverStore.client(for: server),
                   let conversationID = model.selectedConversationID {
             SessionDetailView(server: server, client: client, conversationID: conversationID,
+                              activeEndpointLabel: model.serverStore.endpointLabel(for: server),
                               onOpenSession: { model.open(.newSession($0)) })
                 // Recreate the stateful detail model when the conversation, the
                 // server, or its token changes — so it never streams against a
@@ -358,11 +361,13 @@ struct RootView: View {
             switch route {
             case .conversation(let id):
                 SessionDetailView(server: server, client: client, conversationID: id,
+                                  activeEndpointLabel: model.serverStore.endpointLabel(for: server),
                                   onOpenSession: { model.open(.newSession($0)) })
                     .id("\(server.connectionIdentity)|\(id)|\(client.token.hashValue)")
                     .toolbar(.hidden, for: .tabBar)
             case .newSession(let request):
                 SessionDetailView(server: server, client: client, newSession: request,
+                                  activeEndpointLabel: model.serverStore.endpointLabel(for: server),
                                   onOpenSession: { model.open(.newSession($0)) })
                     .id("\(server.connectionIdentity)|\(request.id)")
                     .toolbar(.hidden, for: .tabBar)

@@ -57,7 +57,8 @@ struct ReconnectSchedule {
     mutating func next(closeReason: String? = nil, unitRandom: Double = Double.random(in: 0...1)) -> TimeInterval {
         let base = min(30, 0.5 * pow(2, Double(min(attempt, 6))))
         attempt += 1
-        if closeReason == EventStream.CloseReason.networkChanged { return 0 }
+        if closeReason == EventStream.CloseReason.networkChanged
+            || closeReason == EventStream.CloseReason.endpointChanged { return 0 }
         return base * (0.8 + 0.4 * min(1, max(0, unitRandom)))
     }
 

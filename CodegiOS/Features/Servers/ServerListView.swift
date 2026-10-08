@@ -98,6 +98,8 @@ struct ServerListView: View {
                 ForEach(store.servers) { server in
                     ServerRow(
                         server: server,
+                        endpoint: store.activeEndpoint(for: server),
+                        endpointLabel: store.endpointLabel(for: server),
                         status: status.status(for: server.id),
                         isSelected: server.id == selectedServerID,
                         onEdit: { openEditor(for: server) },
@@ -209,6 +211,8 @@ struct ServerListView: View {
 /// version / red dot), and a visible ⋯ menu for Edit / Test / Delete.
 private struct ServerRow: View {
     let server: ServerProfile
+    let endpoint: ServerEndpoint
+    let endpointLabel: String
     let status: ServerStatus
     let isSelected: Bool
     let onEdit: () -> Void
@@ -225,6 +229,7 @@ private struct ServerRow: View {
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
                             .truncationMode(.tail)
+                        EndpointBadge(label: endpointLabel)
                         if isSelected {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.caption)
@@ -232,7 +237,7 @@ private struct ServerRow: View {
                                 .accessibilityLabel("Active server")
                         }
                     }
-                    Text(server.displayHost)
+                    Text(verbatim: endpoint.urlString)
                         .font(.mono(12))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)

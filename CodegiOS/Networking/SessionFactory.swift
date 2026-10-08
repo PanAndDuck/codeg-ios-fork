@@ -36,6 +36,8 @@ final class SessionFactory: @unchecked Sendable {
         let baseURL: URL
         let pin: String?
         private let values: [Kind: URLSession]
+        private let lifecycleLock = NSLock()
+        private var invalidated = false
 
         init(baseURL: URL, pin: String?) {
             self.baseURL = baseURL
@@ -50,8 +52,45 @@ final class SessionFactory: @unchecked Sendable {
 
         func requestEvaluator() -> TrustEvaluator { TrustEvaluator(baseURL: baseURL, pin: pin) }
 
-        func invalidate() {
-            values.values.forEach { $0.finishTasksAndInvalidate() }
+        /// URLSession raises an Objective-C exception if a task is constructed
+        /// after invalidation. Serialize synchronous task creation against
+        /// invalidate; checking the transport generation alone has a race.
+        func data(for request: URLRequest, session: URLSession, delegate: TrustEvaluator) async throws -> (Data, URLResponse) {
+            let cancellation = RequestCancellation()
+            return try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                return try await withCheckedThrowingContinuation { continuation in
+                    lifecycleLock.withLock {
+                        guard !invalidated else {
+                            continuation.resume(throwing: URLError(.cancelled))
+                            return
+                        }
+                        let task = session.dataTask(with: request) { data, response, error in
+                            if let error { continuation.resume(throwing: error) }
+                            else if let data, let response { continuation.resume(returning: (data, response)) }
+                            else { continuation.resume(throwing: APIError.transport("Malformed response")) }
+                        }
+                        task.delegate = delegate
+                        cancellation.install(task)
+                        task.resume()
+                    }
+                }
+            } onCancel: {
+                cancellation.cancel()
+            }
+        }
+
+        func invalidate(cancelOutstanding: Bool = false) {
+            let shouldInvalidate = lifecycleLock.withLock {
+                guard !invalidated else { return false }
+                invalidated = true
+                return true
+            }
+            guard shouldInvalidate else { return }
+            values.values.forEach {
+                if cancelOutstanding { $0.invalidateAndCancel() }
+                else { $0.finishTasksAndInvalidate() }
+            }
         }
 
         deinit { invalidate() }
@@ -88,4 +127,26 @@ final class SessionFactory: @unchecked Sendable {
     }
 
     deinit { cache.values.forEach { $0.sessions.invalidate() } }
+}
+
+private final class RequestCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionTask?
+    private var cancelled = false
+
+    func install(_ task: URLSessionTask) {
+        let shouldCancel = lock.withLock {
+            self.task = task
+            return cancelled
+        }
+        if shouldCancel { task.cancel() }
+    }
+
+    func cancel() {
+        let task = lock.withLock {
+            cancelled = true
+            return self.task
+        }
+        task?.cancel()
+    }
 }

@@ -15,12 +15,23 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
         }
     }
     var pairingMode: String?
+    var secondaryEndpoint: ServerEndpoint?
+    /// Runtime values are hydrated from Keychain; Codable writes names only.
+    var customHeaders: [HeaderPair]
+    var credentialsRevision: UUID?
+
+    var primaryEndpoint: ServerEndpoint {
+        ServerEndpoint(urlString: urlString, pinnedCertSHA256: pinnedCertSHA256)
+    }
 
     /// Changes to the endpoint or TLS policy must recreate stateful clients.
-    var connectionIdentity: String { "\(id)|\(urlString)|\(pinnedCertSHA256 ?? "")" }
+    var connectionIdentity: String {
+        "\(id)|\(urlString)|\(pinnedCertSHA256 ?? "")|\(pairingMode ?? "")|\(secondaryEndpoint?.urlString ?? "")|\(secondaryEndpoint?.pinnedCertSHA256 ?? "")|\(credentialsRevision?.uuidString ?? "")"
+    }
 
     init(id: UUID = UUID(), name: String, urlString: String, createdAt: Date = Date(),
-         pinnedCertSHA256: String? = nil, pairingMode: String? = nil) {
+         pinnedCertSHA256: String? = nil, pairingMode: String? = nil,
+         secondaryEndpoint: ServerEndpoint? = nil, customHeaders: [HeaderPair] = []) {
         self.id = id
         self.name = name
         self.urlString = urlString
@@ -28,10 +39,12 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
         // Keep malformed non-nil values fail-closed at the trust boundary.
         self.pinnedCertSHA256 = pinnedCertSHA256.map { (try? CertificateFingerprint.normalize($0)) ?? $0 }
         self.pairingMode = pairingMode
+        self.secondaryEndpoint = secondaryEndpoint
+        self.customHeaders = customHeaders
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, urlString, createdAt, pinnedCertSHA256, pairingMode
+        case id, name, urlString, createdAt, pinnedCertSHA256, pairingMode, secondaryEndpoint, customHeaders, credentialsRevision
     }
 
     init(from decoder: Decoder) throws {
@@ -43,6 +56,22 @@ struct ServerProfile: Identifiable, Codable, Hashable, Sendable {
         pinnedCertSHA256 = try values.decodeIfPresent(String.self, forKey: .pinnedCertSHA256)
             .map { try CertificateFingerprint.normalize($0) }
         pairingMode = try values.decodeIfPresent(String.self, forKey: .pairingMode)
+        secondaryEndpoint = try values.decodeIfPresent(ServerEndpoint.self, forKey: .secondaryEndpoint)
+        customHeaders = try values.decodeIfPresent([HeaderPair].self, forKey: .customHeaders) ?? []
+        credentialsRevision = try values.decodeIfPresent(UUID.self, forKey: .credentialsRevision)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(name, forKey: .name)
+        try values.encode(urlString, forKey: .urlString)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encodeIfPresent(pinnedCertSHA256, forKey: .pinnedCertSHA256)
+        try values.encodeIfPresent(pairingMode, forKey: .pairingMode)
+        try values.encodeIfPresent(secondaryEndpoint, forKey: .secondaryEndpoint)
+        try values.encode(customHeaders.map { HeaderPair(name: $0.name, value: "") }, forKey: .customHeaders)
+        try values.encodeIfPresent(credentialsRevision, forKey: .credentialsRevision)
     }
 
     /// Normalized, validated base URL (`http://host:3080`), or nil if it is not a

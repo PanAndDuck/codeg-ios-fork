@@ -13,6 +13,7 @@ import SwiftUI
 struct SessionDetailView: View {
     let server: ServerProfile
     let client: CodegClient
+    let activeEndpointLabel: String?
     /// Open a new draft session (used when the branch switcher resolves a branch
     /// to another worktree folder). `nil` where the host can't navigate.
     let onOpenSession: ((NewSessionRequest) -> Void)?
@@ -29,18 +30,20 @@ struct SessionDetailView: View {
     @State private var showDetails = false
     @State private var showDeleteConfirm = false
 
-    init(server: ServerProfile, client: CodegClient, conversationID: Int,
+    init(server: ServerProfile, client: CodegClient, conversationID: Int, activeEndpointLabel: String? = nil,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
         self.server = server
         self.client = client
+        self.activeEndpointLabel = activeEndpointLabel
         self.onOpenSession = onOpenSession
         _model = State(initialValue: SessionDetailViewModel(client: client, conversationID: conversationID))
     }
 
-    init(server: ServerProfile, client: CodegClient, newSession request: NewSessionRequest,
+    init(server: ServerProfile, client: CodegClient, newSession request: NewSessionRequest, activeEndpointLabel: String? = nil,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
         self.server = server
         self.client = client
+        self.activeEndpointLabel = activeEndpointLabel
         self.onOpenSession = onOpenSession
         _model = State(initialValue: SessionDetailViewModel(client: client, newSession: request))
     }
@@ -61,6 +64,14 @@ struct SessionDetailView: View {
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let activeEndpointLabel {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        navTitle.font(.headline).lineLimit(1)
+                        EndpointBadge(label: activeEndpointLabel)
+                    }
+                }
+            }
             // The agent avatar (formerly in the compose bar) sits to the right of
             // the title. Shown once loaded; for an editable draft its sheet also
             // hosts the Agent + Folder pickers, otherwise just Mode/config.

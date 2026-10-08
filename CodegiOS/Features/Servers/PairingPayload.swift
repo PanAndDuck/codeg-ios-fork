@@ -7,6 +7,11 @@ struct PairingPayload {
     let fingerprint: String?
     let mode: String?
 
+    func shouldOfferSecondary(editing: ServerProfile?, primaryMode: String?, primaryURL: URL?) -> Bool {
+        editing != nil && mode == "relay" && primaryMode != "relay"
+            && primaryURL != nil && primaryURL != url
+    }
+
     enum Invalid: LocalizedError {
         case payload, version, mode, fingerprintRequiresHTTPS
 
