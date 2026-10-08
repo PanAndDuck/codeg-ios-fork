@@ -98,6 +98,27 @@ xcodebuild -project CodegiOS.xcodeproj -scheme CodegiOS \
 The resulting display name, bundle id and URL scheme are `Codeg`, `app.codeg.ios`
 and `codeg`. No official build is installed by `build-fork.sh`.
 
+## Transcript windows
+
+Session detail opens with `get_folder_conversation` and `tailTurns: 60`.
+Foreground and post-turn reconciliation refresh from the loaded `fromIndex`.
+The server can expand a tail or older page backward to a user-round boundary;
+the client uses the returned offsets, never a guessed 60-turn offset.
+
+“Load earlier messages” fetches `get_folder_conversation_turns` with
+`beforeIndex` set to the loaded offset and `limit: 60`. A page's
+`prefix_hash_before_index` must match the current `prefix_hash`; refreshes
+require the same offset and prefix hash. A mismatch refetches the tail.
+Servers without window metadata are treated as returning complete history.
+Folder lookup runs independently, so a slow or failed folder list cannot
+prevent the transcript from appearing.
+
+`ConversationWindowTests`, `SessionWindowLoadTests`, and `TranscriptPagingTests`
+cover the wire contract, merge/reset behavior, request sequence, transient
+retry, folder failure/stall, late-page rejection, and local-to-network paging.
+They use synthetic transcripts and an intercepted `.invalid` host; no live
+Codeg account or official server is required.
+
 ## Isolation and links
 
 Fork OS links use `codegfork://`, for example `codegfork://tab/settings`.
