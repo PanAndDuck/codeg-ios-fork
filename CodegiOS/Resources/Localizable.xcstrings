@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Reconnecting… (%lld)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在重新连接…（%lld）"
+          }
+        }
+      }
+    },
+    "Retry now" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "立即重试"
+          }
+        }
+      }
+    },
     "Cursor Configuration" : {
       "localizations" : {
         "zh-Hans" : {
