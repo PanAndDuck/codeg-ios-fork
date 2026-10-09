@@ -231,7 +231,7 @@ struct SessionDetailView: View {
             isFetchingEarlier: model.isLoadingEarlierTurns,
             earlierTurnsError: model.earlierTurnsError,
             historyResetTick: model.historyResetTick,
-            onLoadEarlier: { await model.loadEarlierTurns() }
+            onLoadEarlier: { capture in await model.loadEarlierTurns(beforePrepend: capture) }
         ) {
             // No top banner on an existing session — its identity + stats now
             // live in the nav-bar "…" → Session Details, so messages start at

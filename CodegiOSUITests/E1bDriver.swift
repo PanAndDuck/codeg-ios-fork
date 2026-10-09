@@ -12,7 +12,9 @@ final class E1bDriver: XCTestCase {
         }
         let config = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: String]
         let base = try XCTUnwrap(config["url"])
-        let app = XCUIApplication(bundleIdentifier: config["bundleID"] ?? "app.codeg.ios.fork.yourname")
+        let bundleID = config["bundleID"] ?? "app.codeg.ios.fork.yourname"
+        XCTAssertTrue(bundleID == "app.codeg.ios.fork" || bundleID.hasPrefix("app.codeg.ios.fork."))
+        let app = XCUIApplication(bundleIdentifier: bundleID)
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         let session = URLSession(configuration: .ephemeral)
@@ -88,6 +90,11 @@ final class E1bDriver: XCTestCase {
             case "activate": app.activate()
             case "launch": app.launch()
             case "state": break
+            case "frames":
+                result["frames"] = matches.allElementsBoundByIndex.map {
+                    ["label": $0.label, "x": $0.frame.minX, "y": $0.frame.minY,
+                     "width": $0.frame.width, "height": $0.frame.height] as [String: Any]
+                }
             default: result["error"] = "unsupported action"
             }
             result["tree"] = app.debugDescription

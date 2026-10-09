@@ -171,6 +171,23 @@ retry, folder failure/stall, late-page rejection, and local-to-network paging.
 They use synthetic transcripts and an intercepted `.invalid` host; no live
 Codeg account or official server is required.
 
+Paging captures the first visible persisted turn/row immediately before a local
+reveal and again immediately before a validated server prepend is published.
+The List keeps its initial 50-turn render window and cell recycling. SwiftUI
+geometry measures the same stable row after layout; ScrollViewReader
+realizes it if needed, then a nonanimated content-offset correction preserves
+its exact position, including partial rows and safe-area insets. Header loading
+states participate in the same preservation. A small UIKit probe only locates
+the enclosing scroll view. A new scroll gesture, history
+reset, jump to question, or jump to latest cancels the old anchor.
+
+`TranscriptAnchorTests` covers the coordinate bookkeeping and real UIScrollView
+correction/cancellation; window-load tests cover capture timing and stale/failed
+page rejection. The optional `E1bUI` scheme drives an isolated simulator through
+a loopback controller fixture (`CodegiOSUITests/E1bController.json`, ignored).
+Its `bundleID` must identify a fork app; `frames` returns accessibility coordinates
+for before/after evidence. This driver is separate from the regular unit suite.
+
 ## Isolation and links
 
 Fork OS links use `codegfork://`, for example `codegfork://tab/settings`.
