@@ -140,6 +140,36 @@ server. For parallel tasks, select a dedicated simulator with
 `scripts/build-fork.sh test --name <simulator-name>` and use the same name for
 `sim`, avoiding concurrent installation of the fork into one simulator.
 
+## Folderless chat
+
+New Task offers **Chat (no folder)** alongside the folder picker. With no open
+project folders it selects chat automatically; the empty state also offers
+**Start chat (no folder)** and **Open Folder**. Custom agent identities use the
+same server catalog as project sessions.
+
+Entering chat prepares `create_chat_dir` once per draft. Agent options use that
+real directory. First send calls `create_chat_conversation` with `agentType`, a
+title from the first prompt, and `existingDir`, then uses the returned folder and
+conversation IDs with the existing connect/attach/prompt/recovery pipeline.
+Repeated taps join the same creation. A failed first send keeps the created chat
+for retry; an uncertain creation response is reconciled by its directory through
+the folder and conversation read APIs before another create attempt. The server's
+unique folder path is the final duplicate guard. An unused empty chat can be
+deleted through the normal session menu. No server or database changes are needed.
+
+Chat conversations have their own **Chat** group; pinned chats move to **Pinned**.
+Summary `kind` keeps them visible even when the folder list is unavailable, with
+folder `kind` as a fallback for older summaries. Hidden chat folders never enter
+the project picker. Chat sessions hide repository branch controls. Rename, pin,
+delete and windowed transcript loading use the normal session actions.
+
+A 404 or 501 from either chat endpoint disables chat entry for that server's
+current transport lifetime. Ordinary network failures remain retryable. English
+and Simplified Chinese strings are included. `ChatModeTests` covers wire shapes,
+directory/creation reuse, lost responses, cancellation, options connections,
+unsupported endpoints, retry behavior and grouping. The isolated F6 mock E2E
+evidence is recorded in the program's `reports/F6.md`.
+
 ## Transcript windows
 
 Session detail opens with `get_folder_conversation` and `tailTurns: 60`.

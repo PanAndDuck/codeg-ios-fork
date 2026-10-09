@@ -169,6 +169,87 @@ final class ChatModeTests: XCTestCase {
         XCTAssertTrue(FolderVisibility.filterTopLevel([folder]).isEmpty)
     }
 
+    @MainActor
+    func testCancelDuringCreationStillBindsTheRowWithoutSendingPrompt() async throws {
+        let creating = expectation(description: "Server is creating the chat")
+        let releaseResponse = DispatchSemaphore(value: 0)
+        var creates = 0
+        var connects = 0
+        let api = client { request in
+            switch request.url?.lastPathComponent {
+            case "list_open_folder_details", "list_all_folder_details": return (200, "[]")
+            case "acp_list_agents": return (200, Self.agents)
+            case "create_chat_dir": return (200, #"{"path":"/scratch/chat"}"#)
+            case "create_chat_conversation":
+                creates += 1
+                creating.fulfill()
+                guard releaseResponse.wait(timeout: .now() + 3) == .success else { throw URLError(.timedOut) }
+                return (200, Self.created)
+            case "get_folder_conversation": return (200, "{\"summary\":\(Self.summary),\"turns\":[]}")
+            case "acp_connect": connects += 1; return (400, #"{"message":"fixture"}"#)
+            default: return (200, "null")
+            }
+        }
+        let model = SessionDetailViewModel(client: api, newSession: NewSessionRequest(isChat: true))
+        defer { model.teardown() }
+        await model.load()
+        model.draft = "Cancel me"
+        model.send()
+        await fulfillment(of: [creating], timeout: 2)
+        model.cancel()
+        releaseResponse.signal()
+        for _ in 0..<200 where model.conversationID == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.conversationID, 42)
+        XCTAssertFalse(model.isInFlight)
+        XCTAssertEqual(connects, 0)
+        model.draft = "Retry"
+        model.send()
+        for _ in 0..<200 where model.isInFlight { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.conversationID, 42)
+        XCTAssertEqual(creates, 1)
+    }
+
+    @MainActor
+    func testOptionsConnectionUsesPreparedDirectoryAndIsReused() async throws {
+        var connects = 0
+        let api = client { request in
+            switch request.url?.lastPathComponent {
+            case "list_open_folder_details", "list_all_folder_details": return (200, "[]")
+            case "acp_list_agents": return (200, Self.agents)
+            case "create_chat_dir": return (200, #"{"path":"/scratch/chat"}"#)
+            case "acp_connect":
+                connects += 1
+                XCTAssertEqual(ChatHTTPFixture.body(request)["workingDir"] as? String, "/scratch/chat")
+                return (200, #""mock-connection""#)
+            default: return (200, "null")
+            }
+        }
+        let model = SessionDetailViewModel(client: api, newSession: NewSessionRequest(isChat: true))
+        defer { model.teardown() }
+        await model.load()
+        let first = try await model.resolveConnectionForOptions()
+        let second = try await model.resolveConnectionForOptions()
+        XCTAssertEqual(first, "mock-connection")
+        XCTAssertEqual(second, first)
+        XCTAssertEqual(connects, 1)
+        XCTAssertNil(model.conversationID)
+    }
+
+    @MainActor
+    func testCreationEndpointUnavailableDisablesAllDraftsForThisServer() async throws {
+        for status in [404, 501] {
+            let api = client { request in
+                request.url?.lastPathComponent == "create_chat_dir"
+                    ? (200, #"{"path":"/scratch/chat"}"#) : (status, #"{"message":"unsupported"}"#)
+            }
+            let draft = ChatDraftSession(client: api)
+            _ = try? await draft.createConversation(agent: .custom("custom:e2e-mock"), title: nil)
+            XCTAssertFalse(draft.isAvailable)
+            XCTAssertFalse(ChatDraftSession(client: api).isAvailable)
+            XCTAssertFalse(draft.hasUnresolvedCreation)
+        }
+    }
+
     static let folder = ##"{"id":7,"name":"Chat","path":"/scratch/chat","kind":"chat","last_opened_at":"2026-10-09T00:00:00Z","sort_order":0,"color":"#000000"}"##
     static let summary = #"{"id":42,"folder_id":7,"title":"Hello","kind":"chat","agent_type":"custom:e2e-mock","status":"pending_review","message_count":0,"created_at":"2026-10-09T00:00:00Z","updated_at":"2026-10-09T00:00:00Z"}"#
     static var created: String { "{\"conversation_id\":42,\"folder_id\":7,\"folder\":\(folder)}" }
