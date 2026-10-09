@@ -203,7 +203,16 @@ this checkout's `build/fork` directory.
 
 ## Relay pairing and certificate trust
 
-The server QR scanner accepts version 1 pairing JSON (`v`, `mode`, `url`,
+**Paste pairing code** is available on the welcome screen and in every Add/Edit
+Server sheet. Expand it to type a code or tap the system **Paste** button.
+SwiftUI `PasteButton` delivers text after the user's tap, without a separate
+paste-permission alert or a direct `UIPasteboard` read. The code field hides
+credentials. Clipboard import fills the
+editor immediately; typed input uses **Import pairing code**. Review the fields
+and tap **Save** to persist them; Cancel discards the draft.
+
+Paste, typed input and the server QR scanner share one import path. It accepts
+version 1 pairing JSON (`v`, `mode`, `url`,
 `token`, optional `fp` and `name`), legacy JSON (`url`/`address`/`server`),
 plain URLs and URLs with `?token=`. `fp` is the SHA-256 of the **leaf certificate
 DER**, not its public key. Prefixes `sha256/` and `SHA256:`, colons and whitespace
@@ -216,7 +225,7 @@ trusted source, tap **Trust this certificate** to stage the pin and retry.
 **Save** persists it with the profile. Existing pins appear in a collapsed
 disclosure. A different certificate is rejected even if system-trusted;
 **Replace pin** displays a separate confirmation before staging the replacement.
-Changing editor fields clears stale probe results. Imported QR pins are staged
+Changing editor fields clears stale probe results. Imported pairing pins are staged
 with the other fields and saved together.
 
 `SessionFactory.Sessions[.standard/.read/.probe/.install/.stream]` retains the
@@ -246,8 +255,9 @@ Optional `secondaryEndpoint` contains its own `urlString` / `pinnedCertSHA256`.
 Each pin has the same strict trust and explicit TOFU behavior. Test Connection
 has a primary/relay selector, and certificate results belong to that selection.
 The primary's LAN/Relay type is editable (legacy profiles default to LAN; relay
-QR sets Relay). A relay QR imported into an existing LAN profile first offers
-to keep LAN and add/replace the secondary, replace primary, or cancel. Nothing
+pairing sets Relay). A relay code scanned, pasted or typed into an existing LAN
+profile first offers to keep LAN and add/replace the secondary, replace primary,
+or cancel. Nothing
 is changed before that choice; Save persists the draft. Both endpoints must
 represent the same codeg server and share its token/custom headers.
 
@@ -301,3 +311,24 @@ trap stops only its recorded Python process and removes the certificate, key,
 fixture resource and temporary data directories. Integration cases skip when
 the generated fixture resource is absent. No codeg server or physical device
 is used.
+
+The clipboard/text adapter (`PairingCodeInput`) takes an import closure and
+has no UIKit dependency. Its unit tests exercise the shared QR import path,
+relay/direct and legacy formats, atomic fingerprint errors, empty/multiple
+paste values and the existing-LAN merge offer. Run them with the regular suite:
+
+```bash
+scripts/test-pairing-paste.sh --name F4
+```
+
+This helper only runs unit tests and limits console output. For manual smoke,
+build with `scripts/build-fork.sh sim --name F4 2>&1 | tail -n 40`, put a synthetic
+relay JSON (fake token and 64-hex fingerprint) on the dedicated simulator's
+pasteboard using `xcrun simctl pbcopy F4`, open **Paste pairing code**, and capture
+the editor with `xcrun simctl io F4 screenshot <path>`. Do not save the synthetic
+profile or test its connection. Shut down F4 afterward. Shared UI automation is
+owned by E1b/E1c; this task adds no UI-test target.
+
+English and Simplified Chinese pairing strings are in the string catalog,
+including shared parser errors rendered with the app's selected display locale.
+The Paste button uses the system-provided localized label.

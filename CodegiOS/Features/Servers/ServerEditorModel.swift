@@ -286,12 +286,18 @@ final class ServerEditorModel {
         return true
     }
 
-    // MARK: - QR scan
+    // MARK: - Pairing import
 
-    /// Parse fully before applying, so a bad fingerprint never leaves a partly
-    /// imported endpoint/token. A QR replaces the trust metadata along with URL.
     @discardableResult
     func applyScanned(_ raw: String) -> Bool {
+        applyPairingCode(raw)
+    }
+
+    /// Parse fully before applying, so a bad fingerprint never leaves a partly
+    /// imported endpoint/token. Camera, clipboard and typed codes all use this
+    /// path, including pin replacement and the existing-LAN relay merge offer.
+    @discardableResult
+    func applyPairingCode(_ raw: String) -> Bool {
         do {
             let pairing = try PairingPayload.parse(raw)
             if pairing.shouldOfferSecondary(editing: editing, primaryMode: pairingMode, primaryURL: parsedBaseURL) {

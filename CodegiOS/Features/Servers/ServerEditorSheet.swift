@@ -13,20 +13,25 @@ struct ServerEditorSheet: View {
     @State private var saveError: LocalizedStringKey?
     @State private var showScanner = false
     @State private var scanError: String?
+    @State private var showPairingInput: Bool
+    @State private var pairingCode = ""
+    @State private var pairingError: String?
     @State private var replacementFingerprint: String?
     @FocusState private var focusedField: Field?
     @Environment(\.dismiss) private var dismiss
 
-    private enum Field: Hashable { case name, url, token }
+    private enum Field: Hashable { case name, url, token, pairing }
 
     init(
         store: ServerStore,
         editing: ServerProfile? = nil,
         hasExistingToken: Bool = false,
+        startWithPairingCode: Bool = false,
         onSaved: @escaping (ServerProfile) -> Void
     ) {
         self.store = store
         self.onSaved = onSaved
+        _showPairingInput = State(initialValue: startWithPairingCode)
         _model = State(initialValue: ServerEditorModel(
             editing: editing,
             hasExistingToken: hasExistingToken,
@@ -44,6 +49,7 @@ struct ServerEditorSheet: View {
 
                 ScrollView {
                     VStack(spacing: 18) {
+                        pairingSection
                         connectionSection
                         secondarySection
                         authSection
@@ -90,7 +96,7 @@ struct ServerEditorSheet: View {
         )) {
             Button("OK", role: .cancel) { scanError = nil }
         } message: {
-            Text(verbatim: scanError ?? "")
+            Text(LocalizedStringKey(scanError ?? ""))
         }
         .alert("Replace certificate pin?", isPresented: Binding(
             get: { replacementFingerprint != nil },
@@ -123,6 +129,61 @@ struct ServerEditorSheet: View {
 
     // MARK: - Sections
 
+    private var pairingSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                focusedField = nil
+                showPairingInput.toggle()
+                if !showPairingInput {
+                    pairingCode = ""
+                    pairingError = nil
+                }
+            } label: {
+                Label("Paste pairing code", systemImage: "doc.on.clipboard")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .tint(Theme.accent)
+
+            if showPairingInput {
+                EditorSection(title: "Pairing code", footer: "Paste or type the pairing code from codeg. Server URLs and legacy pairing codes are also supported.") {
+                    FieldRow(label: "Pairing code") {
+                        SecureField("Pairing code", text: $pairingCode)
+                            .font(.mono(15))
+                            .keyboardType(.asciiCapable)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .privacySensitive()
+                            .focused($focusedField, equals: .pairing)
+                            .submitLabel(.done)
+                            .onSubmit { pairingInput.submit(pairingCode) }
+                            .onChange(of: pairingCode) { _, _ in pairingError = nil }
+                            .accessibilityIdentifier("pairing.code")
+                    }
+                    HStack {
+                        PasteButton(payloadType: String.self) { values in
+                            pairingInput.paste(values)
+                        }
+                        .accessibilityLabel("Paste pairing code")
+                        .accessibilityIdentifier("pairing.paste")
+                        Spacer()
+                        Button("Import pairing code") { pairingInput.submit(pairingCode) }
+                            .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("pairing.import")
+                    }
+                    .font(.subheadline)
+                    .tint(Theme.accent)
+                    .padding(16)
+                }
+                if let pairingError {
+                    Text(LocalizedStringKey(pairingError))
+                        .font(.footnote)
+                        .foregroundStyle(Theme.danger)
+                        .accessibilityIdentifier("pairing.error")
+                }
+            }
+        }
+    }
+
     private var connectionSection: some View {
         EditorSection(title: "Connection") {
             Picker("Primary endpoint type", selection: $model.primaryIsRelay) {
@@ -132,6 +193,7 @@ struct ServerEditorSheet: View {
             .pickerStyle(.segmented)
             FieldRow(label: "Name") {
                 TextField("My codeg server", text: $model.name)
+                    .accessibilityIdentifier("server.name")
                     .textContentType(.name)
                     .submitLabel(.next)
                     .focused($focusedField, equals: .name)
@@ -144,6 +206,7 @@ struct ServerEditorSheet: View {
             FieldRow(label: "Server URL") {
                 HStack(spacing: 10) {
                     TextField("http://192.168.1.10:3080", text: $model.urlString)
+                        .accessibilityIdentifier("server.url")
                         .font(.mono(15))
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
@@ -180,6 +243,7 @@ struct ServerEditorSheet: View {
         ) {
             FieldRow(label: "Token") {
                 SecureField(model.tokenPlaceholder, text: $model.token)
+                    .accessibilityIdentifier("server.token")
                     .font(.mono(15))
                     .textContentType(.password)
                     .submitLabel(.done)
@@ -306,6 +370,22 @@ struct ServerEditorSheet: View {
     }
 
     // MARK: - Actions
+
+    private var pairingInput: PairingCodeInput {
+        PairingCodeInput(importCode: importPairingCode)
+    }
+
+    private func importPairingCode(_ code: String) -> Bool {
+        focusedField = nil
+        guard model.applyPairingCode(code) else {
+            pairingError = model.scanError
+            return false
+        }
+        pairingCode = ""
+        pairingError = nil
+        showPairingInput = false
+        return true
+    }
 
     private func trustCertificate(replacingPin: Bool = false) {
         guard model.trustPresentedCertificate(replacingPin: replacingPin) else { return }

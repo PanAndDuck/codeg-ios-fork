@@ -17,8 +17,8 @@ struct PairingPayload {
 
         var errorDescription: String? {
             switch self {
-            case .payload: "That QR code is not a valid codeg server address or pairing payload."
-            case .version: "Unsupported pairing QR version. Expected version 1."
+            case .payload: "That pairing code is not a valid codeg server address or pairing payload."
+            case .version: "Unsupported pairing code version. Expected version 1."
             case .mode: "Invalid pairing mode. Expected relay or direct."
             case .fingerprintRequiresHTTPS: "A certificate fingerprint requires an HTTPS server URL."
             }
