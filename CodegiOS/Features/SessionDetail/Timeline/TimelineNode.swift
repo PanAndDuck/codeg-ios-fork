@@ -17,6 +17,8 @@ struct TimelineNode: Identifiable {
     /// nodes (the rail reintroduces agent identity in the gutter without spending
     /// any content width).
     let agent: AgentType
+    /// Persisted owner, retained separately from the per-part row identity.
+    var turnID: String?
     /// Whether the spine continues above / below this node. Suppressed only at the
     /// very first and very last node so the rail terminates at its endpoints.
     var connectTop: Bool = true
@@ -132,20 +134,24 @@ enum TranscriptTimeline {
             switch turn.role {
             case .user:
                 lastUserID = turn.id
-                nodes.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true))
+                nodes.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, turnID: turn.id, startsGroup: true))
                 i += 1
             case .system:
                 // Skip system turns with no renderable text so the rail doesn't
                 // show a lone marker against an empty row.
                 if !SystemText.of(turn).isEmpty {
-                    nodes.append(TimelineNode(id: turn.id, content: .system(turn), agent: agent, startsGroup: true))
+                    nodes.append(TimelineNode(id: turn.id, content: .system(turn), agent: agent, turnID: turn.id, startsGroup: true))
                 }
                 i += 1
             case .assistant:
                 var j = i + 1
                 while j < turns.count, turns[j].role == .assistant { j += 1 }
                 let merged = merge(Array(turns[i..<j]))
-                nodes.append(contentsOf: assistantNodes(merged: merged, questionID: lastUserID, agent: agent))
+                nodes.append(contentsOf: assistantNodes(merged: merged, questionID: lastUserID, agent: agent).map {
+                    var node = $0
+                    node.turnID = merged.id
+                    return node
+                })
                 i = j
             }
         }

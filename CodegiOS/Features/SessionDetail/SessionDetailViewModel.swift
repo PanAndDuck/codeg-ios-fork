@@ -383,7 +383,7 @@ final class SessionDetailViewModel {
         }
     }
 
-    func loadEarlierTurns() async {
+    func loadEarlierTurns(beforePrepend: @MainActor () -> Void = {}) async {
         guard !isLoadingEarlierTurns, let id = conversationID,
               var current = loadedWindow, current.hasEarlierTurns else { return }
         isLoadingEarlierTurns = true
@@ -404,6 +404,9 @@ final class SessionDetailViewModel {
             }.value
             guard !Task.isCancelled, revision == windowRevision, version == turnsVersion else { return }
             if let merged {
+                // The reader may have moved while HTTP/decode/merge was in flight.
+                // Capture only for a validated page, immediately before publishing it.
+                beforePrepend()
                 adoptTranscript(merged, prepending: true)
             } else {
                 let tail = try await fetchWindowedDetail(id: id, forceTail: true)

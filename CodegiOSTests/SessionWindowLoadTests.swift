@@ -85,7 +85,9 @@ final class SessionWindowLoadTests: XCTestCase {
         }
         let model = makeModel()
         await model.load()
-        await model.loadEarlierTurns()
+        var capturedIDs: [String] = []
+        await model.loadEarlierTurns { capturedIDs = model.turns.map(\.id) }
+        XCTAssertEqual(capturedIDs, ["c", "d"], "Capture must see the window immediately before prepend")
         XCTAssertEqual(model.turns.map(\.id), ["a", "b", "c", "d"])
         XCTAssertFalse(model.hasEarlierTurns)
         XCTAssertFalse(model.isLoadingEarlierTurns)
@@ -95,6 +97,43 @@ final class SessionWindowLoadTests: XCTestCase {
         XCTAssertEqual(model.turns.map(\.id), ["a", "b", "c", "d", "e"])
         XCTAssertEqual(WindowURLProtocol.bodies("get_folder_conversation").last,
                        ["conversationId": 42, "fromIndex": 0])
+        model.teardown()
+    }
+
+    @MainActor
+    func testAnchorCaptureWaitsForValidatedPrependAndUsesLatestReadingPosition() async throws {
+        let first = try WindowFixtures.detail(ids: ["c", "d"], offset: 2, total: 4, hash: "seam")
+        let page = try JSONSerialization.data(withJSONObject: [
+            "turns": WindowFixtures.turns(["a", "b"]), "turns_offset": 0, "turns_total": 4,
+            "assistant_turns_before_offset": 0, "prefix_hash": "head", "prefix_hash_before_index": "seam"
+        ])
+        let requested = expectation(description: "Older page waits on the network")
+        WindowURLProtocol.respond = { request, _ in
+            switch request.url?.lastPathComponent {
+            case "list_all_folder_details": return (200, Data("[]".utf8))
+            case "get_folder_conversation_turns": requested.fulfill(); return nil
+            default: return (200, first)
+            }
+        }
+        let model = makeModel()
+        await model.load()
+        var currentVisibleTurn = "c"
+        var capturedTurn: String?
+        var idsAtCapture: [String] = []
+        let paging = Task {
+            await model.loadEarlierTurns {
+                capturedTurn = currentVisibleTurn
+                idsAtCapture = model.turns.map(\.id)
+            }
+        }
+        await fulfillment(of: [requested], timeout: 2)
+        XCTAssertNil(capturedTurn)
+        currentVisibleTurn = "d" // User scrolls while the page is in flight.
+        WindowURLProtocol.completePending("get_folder_conversation_turns", status: 200, data: page)
+        await paging.value
+        XCTAssertEqual(capturedTurn, "d")
+        XCTAssertEqual(idsAtCapture, ["c", "d"])
+        XCTAssertEqual(model.turns.map(\.id), ["a", "b", "c", "d"])
         model.teardown()
     }
 
@@ -116,13 +155,15 @@ final class SessionWindowLoadTests: XCTestCase {
         }
         let model = makeModel()
         await model.load()
-        let paging = Task { await model.loadEarlierTurns() }
+        var captures = 0
+        let paging = Task { await model.loadEarlierTurns { captures += 1 } }
         await fulfillment(of: [pageRequested], timeout: 2)
         await model.loadEarlierTurns()
         XCTAssertEqual(WindowURLProtocol.bodies("get_folder_conversation_turns").count, 1)
         await model.refreshOnForeground()
         WindowURLProtocol.completePending("get_folder_conversation_turns", status: 200, data: page)
         await paging.value
+        XCTAssertEqual(captures, 0, "Rejected late pages must not change the reader's anchor")
         XCTAssertEqual(model.turns.map(\.id), ["reset"])
         XCTAssertFalse(model.hasEarlierTurns)
         model.teardown()
@@ -144,12 +185,15 @@ final class SessionWindowLoadTests: XCTestCase {
         }
         let model = makeModel()
         await model.load()
-        await model.loadEarlierTurns()
+        var captures = 0
+        await model.loadEarlierTurns { captures += 1 }
+        XCTAssertEqual(captures, 0)
         XCTAssertEqual(model.phase, .loaded)
         XCTAssertEqual(model.turns.map(\.id), ["c"])
         XCTAssertNotNil(model.earlierTurnsError)
         XCTAssertTrue(model.hasEarlierTurns)
-        await model.loadEarlierTurns()
+        await model.loadEarlierTurns { captures += 1 }
+        XCTAssertEqual(captures, 1)
         XCTAssertEqual(model.turns.map(\.id), ["a", "b", "c"])
         XCTAssertNil(model.earlierTurnsError)
         model.teardown()
