@@ -359,8 +359,7 @@ struct TranscriptView<Header: View>: View {
                     proxy.scrollTo(id, anchor: anchor)
                 }
             })
-            .onScrollPhaseChange { oldPhase, phase, context in
-                if readingAnchor.isPreserving { NSLog("F1 phase %@ -> %@", String(describing: oldPhase), String(describing: phase)) }
+            .onScrollPhaseChange { _, phase, context in
                 if phase == .tracking || phase == .interacting { readingAnchor.cancel() }
                 let wasUserScrolling = isUserScrolling
                 isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating

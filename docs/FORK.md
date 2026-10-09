@@ -167,11 +167,12 @@ Codeg account or official server is required.
 
 Paging captures the first visible persisted turn/row immediately before a local
 reveal and again immediately before a validated server prepend is published.
-The List keeps its initial 50-turn render window and cell recycling. A small
-UIKit row probe measures the same stable row after layout; ScrollViewReader
+The List keeps its initial 50-turn render window and cell recycling. SwiftUI
+geometry measures the same stable row after layout; ScrollViewReader
 realizes it if needed, then a nonanimated content-offset correction preserves
 its exact position, including partial rows and safe-area insets. Header loading
-states participate in the same preservation. A new scroll gesture, history
+states participate in the same preservation. A small UIKit probe only locates
+the enclosing scroll view. A new scroll gesture, history
 reset, jump to question, or jump to latest cancels the old anchor.
 
 `TranscriptAnchorTests` covers the coordinate bookkeeping and real UIScrollView

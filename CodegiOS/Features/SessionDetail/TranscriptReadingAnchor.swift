@@ -45,7 +45,6 @@ final class TranscriptAnchorController {
 
     func updateRows(_ rows: [String: TranscriptReadingAnchor.Row]) {
         self.rows = rows
-        if let anchor { NSLog("F1 preference update count=%d row=%@", rows.count, String(describing: rows[anchor.rowID])) }
         layoutChanged()
     }
 
@@ -60,11 +59,9 @@ final class TranscriptAnchorController {
         guard anchor == nil else { return }
         guard let scroll = scrollView else { cancel(); return }
         anchor = TranscriptReadingAnchor.capture(rows: Array(rows.values), viewport: viewport(in: scroll))
-        NSLog("F1 preference capture %@ viewport=%@", String(describing: anchor), String(describing: viewport(in: scroll)))
     }
 
     func cancel() {
-        if anchor != nil { NSLog("F1 preference cancel") }
         anchor = nil
         realizeRow = nil
         stopRealizing()
@@ -98,7 +95,6 @@ final class TranscriptAnchorController {
     private func restoreAfterLayout() {
         guard let anchor, let scroll = scrollView else { return }
         guard let row = rows[anchor.rowID], row.turnID == anchor.turnID else {
-            NSLog("F1 preference missing %@ count=%d realize=%d", anchor.rowID, rows.count, realizeRow != nil ? 1 : 0)
             // List may report another intermediate layout before its batch
             // insertion has committed. Keep the ID request until the row returns.
             if !rows.isEmpty { realizeRow?(anchor.rowID) }
@@ -118,7 +114,6 @@ final class TranscriptAnchorController {
         let maximum = max(-insets.top, scroll.contentSize.height - scroll.bounds.height + insets.bottom)
         let y = min(max(-insets.top, scroll.contentOffset.y + delta), maximum)
         guard abs(scroll.contentOffset.y - y) > 0.5 else { return }
-        NSLog("F1 preference correct %@ row=%f offset=%f delta=%f", anchor.rowID, row.frame.minY, scroll.contentOffset.y, delta)
         UIView.performWithoutAnimation {
             scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: y), animated: false)
         }
