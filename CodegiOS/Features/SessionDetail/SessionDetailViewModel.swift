@@ -115,6 +115,7 @@ final class SessionDetailViewModel {
     private(set) var selectedAgent: AgentType?
     /// Agents offered in the draft's in-page picker (narrowed to installed/enabled).
     private(set) var availableAgents: [AgentType] = AgentType.allCases
+    private(set) var agentNames = AgentDisplayNames()
     /// Folders offered in the draft's in-page picker.
     private(set) var availableFolders: [FolderDetail] = []
     /// The full folder set (`list_all_folder_details`), kept so the branch switcher
@@ -271,7 +272,9 @@ final class SessionDetailViewModel {
         // read `AgentsSettingsModel` uses, independent of any live connection.
         insertModel.loadAgentsAction = { [weak self] in
             guard let self else { return [] }
-            return try await self.client.listAgents()
+            let agents = try await self.client.listAgents()
+            self.agentNames = AgentDisplayNames(agents: agents)
+            return agents
         }
 
     }
@@ -449,6 +452,9 @@ final class SessionDetailViewModel {
             folder = allFolders.first { $0.id == detail.summary.folderId }
             currentBranch = detail.summary.gitBranch ?? folder?.gitBranch
             insertModel.agentType = detail.summary.agentType
+            // Built-in sessions may delegate to custom agents too. Load their
+            // display names without delaying the transcript.
+            insertModel.loadAgentsIfNeeded()
             phase = .loaded
             if stickToBottom { requestStickToBottom() }
             // If a turn is still running on this session (started here earlier,
@@ -538,6 +544,7 @@ final class SessionDetailViewModel {
 
         // Narrow agents to what the server actually has installed + enabled.
         if let agents = try? await client.listAgents() {
+            agentNames = AgentDisplayNames(agents: agents)
             let usable = agents.filter { $0.available && $0.enabled }
                 .sorted { $0.sortOrder < $1.sortOrder }
                 .map(\.agentType)

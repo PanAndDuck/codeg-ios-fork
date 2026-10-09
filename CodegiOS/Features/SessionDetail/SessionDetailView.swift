@@ -60,6 +60,7 @@ struct SessionDetailView: View {
         ZStack {
             CodegBackground()
             content
+                .environment(\.agentDisplayNames, model.agentNames)
         }
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -84,6 +85,7 @@ struct SessionDetailView: View {
                         options: model.agentOptions,
                         newSession: model.isDraftEditable ? NewSessionAgentConfig(
                             availableAgents: model.availableAgents,
+                            agentNames: model.agentNames,
                             selectedAgent: model.agentTypeForUI,
                             onSelectAgent: { model.selectAgent($0) },
                             availableFolders: model.availableFolders,
@@ -141,7 +143,7 @@ struct SessionDetailView: View {
         }
         .sheet(isPresented: $showDetails) {
             if let summary = model.summary {
-                SessionDetailsSheet(summary: summary, stats: model.sessionStats, folder: model.folder)
+                SessionDetailsSheet(summary: summary, stats: model.sessionStats, folder: model.folder, agentNames: model.agentNames)
             }
         }
         .task { await model.load() }
@@ -240,6 +242,7 @@ struct SessionDetailView: View {
                 if model.summary == nil, model.isNewSession {
                     NewSessionHeaderCard(
                         agent: model.selectedAgent,
+                        agentNames: model.agentNames,
                         folder: model.folder,
                         isStarting: model.hasStartedFirstSend
                     )
@@ -378,6 +381,7 @@ private struct JumpToLatestButton: View {
 /// the navigation bar until the first send.
 private struct NewSessionHeaderCard: View {
     let agent: AgentType?
+    var agentNames = AgentDisplayNames()
     let folder: FolderDetail?
     let isStarting: Bool
 
@@ -385,7 +389,7 @@ private struct NewSessionHeaderCard: View {
         GlassCard(cornerRadius: Theme.Radius.lg, padding: 14) {
             HStack(spacing: 10) {
                 if let agent {
-                    AgentBadge(agent: agent)
+                    AgentBadge(agent: agent, names: agentNames)
                 }
                 if let folder {
                     HStack(spacing: 4) {
@@ -472,13 +476,14 @@ private struct SessionDetailsSheet: View {
     let summary: ConversationSummary
     let stats: SessionStats?
     let folder: FolderDetail?
+    var agentNames = AgentDisplayNames()
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    SessionHeaderView(summary: summary, stats: stats)
+                    SessionHeaderView(summary: summary, stats: stats, agentNames: agentNames)
                     metadata
                 }
                 .padding(16)

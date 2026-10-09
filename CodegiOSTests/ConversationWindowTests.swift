@@ -97,7 +97,7 @@ enum WindowFixtures {
 
     static func detail(ids: [String], offset: Int? = nil, total: Int? = nil, hash: String? = nil) throws -> Data {
         var object: [String: Any] = [
-            "summary": ["id": 42, "folder_id": 7, "title": "Window test", "agent_type": "claude-code",
+            "summary": ["id": 42, "folder_id": 7, "title": "Window test", "agent_type": "claude_code",
                         "status": "completed", "message_count": total ?? ids.count,
                         "created_at": "2026-10-09T00:00:00Z", "updated_at": "2026-10-09T00:00:00Z"],
             "turns": turns(ids)

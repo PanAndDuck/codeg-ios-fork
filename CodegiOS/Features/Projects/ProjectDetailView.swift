@@ -84,6 +84,7 @@ private struct FolderDetailContent: View {
     @State private var git: FolderGitModel
     @State private var terminal: TerminalSession
     @State private var showCommit = false
+    @State private var agentNames = AgentDisplayNames()
 
     init(client: CodegClient, folder: FolderDetail, activity: ActivityModel) {
         self.client = client
@@ -104,6 +105,7 @@ private struct FolderDetailContent: View {
             VStack(spacing: 14) {
                 FolderHeader(
                     folder: folder,
+                    agentNames: agentNames,
                     sessionCount: activity.conversations(in: folder.id).count,
                     runningCount: activity.runningCount(folderID: folder.id)
                 )
@@ -130,6 +132,11 @@ private struct FolderDetailContent: View {
         // tab (or the commit composer) initiated the operation.
         .sheet(item: $git.credentialPrompt) { prompt in
             GitCredentialSheet(model: git, prompt: prompt)
+        }
+        .task(id: folder.defaultAgentType) {
+            guard let agent = folder.defaultAgentType, !agent.isBuiltIn,
+                  let agents = try? await client.listAgents(), !Task.isCancelled else { return }
+            agentNames = AgentDisplayNames(agents: agents)
         }
     }
 
@@ -184,6 +191,7 @@ enum FolderTab: String, CaseIterable, Identifiable {
 /// ``ActivityModel`` snapshot — no extra requests.
 private struct FolderHeader: View {
     let folder: FolderDetail
+    let agentNames: AgentDisplayNames
     let sessionCount: Int
     let runningCount: Int
 
@@ -214,7 +222,7 @@ private struct FolderHeader: View {
                         chip(symbol: "arrow.triangle.branch", text: branch)
                     }
                     if let agent = folder.defaultAgentType {
-                        AgentBadge(agent: agent)
+                        AgentBadge(agent: agent, names: agentNames)
                     }
                     Spacer(minLength: 8)
                     sessionStat

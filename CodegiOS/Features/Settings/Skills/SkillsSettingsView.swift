@@ -99,6 +99,7 @@ struct SkillsSettingsView: View {
         HStack(spacing: 0) {
             AgentSelectorPill(
                 agents: model.agents,
+                names: model.agentNames,
                 selected: model.selectedAgent,
                 onSelect: { agent in Task { await model.select(agent) } }
             )
@@ -192,11 +193,11 @@ struct SkillsSettingsView: View {
         if let agent = model.resultAgent ?? model.selectedAgent {
             switch route {
             case .add:
-                SkillEditorSheet(mode: .create, agent: agent, loadContent: { try await model.content(of: $0, agent: agent) }) { id, scope, content, layout in
+                SkillEditorSheet(mode: .create, agent: agent, agentName: model.agentNames.name(for: agent), loadContent: { try await model.content(of: $0, agent: agent) }) { id, scope, content, layout in
                     try await model.save(skillId: id, scope: scope, content: content, layout: layout, agent: agent)
                 }
             case .edit(let skill):
-                SkillEditorSheet(mode: .edit(skill), agent: agent, loadContent: { try await model.content(of: $0, agent: agent) }) { id, scope, content, layout in
+                SkillEditorSheet(mode: .edit(skill), agent: agent, agentName: model.agentNames.name(for: agent), loadContent: { try await model.content(of: $0, agent: agent) }) { id, scope, content, layout in
                     try await model.save(skillId: id, scope: scope, content: content, layout: layout, agent: agent)
                 }
             }
@@ -267,6 +268,7 @@ private struct ReadOnlyBadge: View {
 /// the menu itself is a text list (iOS tints menu glyphs monochrome regardless).
 private struct AgentSelectorPill: View {
     let agents: [AgentType]
+    let names: AgentDisplayNames
     let selected: AgentType?
     let onSelect: (AgentType) -> Void
 
@@ -277,7 +279,7 @@ private struct AgentSelectorPill: View {
                 // inline picker renders the agents with an automatic checkmark.
                 Picker("", selection: selectionBinding) {
                     ForEach(agents) { agent in
-                        Text(agent.displayName).tag(Optional(agent))
+                        Text(names.name(for: agent)).tag(Optional(agent))
                     }
                 }
                 .pickerStyle(.inline)
@@ -304,7 +306,7 @@ private struct AgentSelectorPill: View {
             if let agent = selected {
                 AgentIcon(agent: agent)
                     .frame(width: 18, height: 18)
-                Text(agent.displayName)
+                Text(names.name(for: agent))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)

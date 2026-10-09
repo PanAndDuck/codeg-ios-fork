@@ -6,14 +6,16 @@ import Observation
 struct ExpertDetailView: View {
     let expert: ExpertListItem
     let agents: [AgentType]
+    let agentNames: AgentDisplayNames
     let client: CodegClient?
 
     @State private var model: ExpertDetailModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    init(expert: ExpertListItem, agents: [AgentType], client: CodegClient?) {
+    init(expert: ExpertListItem, agents: [AgentType], agentNames: AgentDisplayNames, client: CodegClient?) {
         self.expert = expert
         self.agents = agents
+        self.agentNames = agentNames
         self.client = client
         _model = State(initialValue: ExpertDetailModel(expertId: expert.id, client: client))
     }
@@ -129,7 +131,7 @@ struct ExpertDetailView: View {
                 .frame(width: 34, height: 34)
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
-                Text(agent.displayName)
+                Text(agentNames.name(for: agent))
                     .font(.body)
                     .foregroundStyle(Theme.textPrimary)
                 if let caption {

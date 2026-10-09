@@ -20,8 +20,8 @@ struct AgentIcon: View {
     }
 
     var body: some View {
-        if UIImage(named: agent.iconAsset) != nil {
-            Image(agent.iconAsset)
+        if let asset = agent.iconAsset, UIImage(named: asset) != nil {
+            Image(asset)
                 // Be explicit about intent rather than relying on the asset's
                 // configured rendering intent: mono agents tint, color render as-is.
                 .renderingMode(agent.iconIsTemplate ? .template : .original)
@@ -30,7 +30,7 @@ struct AgentIcon: View {
                 // A template image adopts this; an original (color) image ignores it.
                 .foregroundStyle(tint)
         } else {
-            // Defensive fallback if the brand asset is ever missing/renamed.
+            // Generic custom/unknown mark, also used if a brand asset is missing.
             Image(systemName: agent.symbolName)
                 .resizable()
                 .scaledToFit()

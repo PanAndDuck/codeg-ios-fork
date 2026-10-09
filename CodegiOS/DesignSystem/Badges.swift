@@ -123,11 +123,12 @@ struct CountBadge: View {
 /// Compact agent capsule (brand icon + short name).
 struct AgentBadge: View {
     let agent: AgentType
+    var names = AgentDisplayNames()
 
     var body: some View {
         HStack(spacing: 4) {
             AgentIcon(agent: agent).frame(width: 11, height: 11)
-            Text(agent.shortName).font(.caption2.weight(.semibold))
+            Text(names.name(for: agent, abbreviated: true)).font(.caption2.weight(.semibold))
                 .foregroundStyle(agent.accent)
         }
         .padding(.horizontal, 8)

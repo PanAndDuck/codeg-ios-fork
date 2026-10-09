@@ -89,6 +89,7 @@ struct CompanionStatusBadge: View {
 /// "View session" affordance.
 struct DelegatedSubThreadCard: View {
     let vm: ToolCallVM
+    @Environment(\.agentDisplayNames) private var agentNames
 
     var body: some View {
         // The broker-written `meta["codeg.delegation"]` is the authoritative
@@ -107,7 +108,7 @@ struct DelegatedSubThreadCard: View {
             avatar(input.agentType)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(verbatim: input.agentType?.displayName ?? String(localized: "Sub-agent"))
+                    Text(verbatim: input.agentType.map { agentNames.name(for: $0) } ?? String(localized: "Sub-agent"))
                         .font(Theme.Typography.cardTitle)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)

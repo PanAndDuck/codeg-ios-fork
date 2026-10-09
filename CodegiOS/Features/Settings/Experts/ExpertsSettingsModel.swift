@@ -41,6 +41,7 @@ final class ExpertsSettingsModel {
     private(set) var experts: [ExpertListItem] = []
     /// Server agents (available + enabled), the columns of each expert's matrix.
     private(set) var agents: [AgentType] = []
+    private(set) var agentNames = AgentDisplayNames()
     var refreshError: String?
 
     private let client: CodegClient?
@@ -76,6 +77,7 @@ final class ExpertsSettingsModel {
             experts = try await client.builtInExperts()
             // Agents are best-effort — a failure here shouldn't blank the catalog.
             if let list = try? await client.listAgents() {
+                agentNames = AgentDisplayNames(agents: list)
                 agents = list.filter { $0.available && $0.enabled }
                     .sorted { $0.sortOrder < $1.sortOrder }
                     .map(\.agentType)
