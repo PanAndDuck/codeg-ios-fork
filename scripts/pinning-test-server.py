@@ -6,6 +6,7 @@ import http.server
 import pathlib
 import ssl
 import sys
+import time
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -25,6 +26,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        if self.path.startswith("/slow/"):
+            time.sleep(2)
         if not self.headers_allowed():
             return
         if self.path.startswith("/redirect-"):
@@ -52,6 +55,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self.headers_allowed():
+            return
+        if self.path.startswith("/stall/"):
+            time.sleep(6)
+            self.close_connection = True
             return
         key = self.headers.get("Sec-WebSocket-Key")
         if self.path not in ("/ws/events", "/headers/ws/events", "/offline/ws/events") or not key:

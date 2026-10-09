@@ -30,6 +30,11 @@ final class TerminalSocket: @unchecked Sendable {
     private let token: String
     private let customHeaders: [HeaderPair]
     private let onOutcome: @Sendable (Bool) -> Void
+    private let onConnectivityFailure: @Sendable () async -> Bool
+    private let connectionTimeout: TimeInterval?
+    private var connectionTimer: DispatchWorkItem?
+    private var recoveringConnection = false
+    private var connectionEstablished = false
     var endpointRegistration: ConnectionTransport.Registration?
     private let session: URLSession
     private let lock = NSLock()
@@ -41,10 +46,14 @@ final class TerminalSocket: @unchecked Sendable {
     private static let exitPrefix = "terminal://exit/"
 
     init(baseURL: URL, token: String, session: URLSession = EventStream.streamSession,
-         customHeaders: [HeaderPair] = [], onOutcome: @escaping @Sendable (Bool) -> Void = { _ in }) {
+         customHeaders: [HeaderPair] = [], connectionTimeout: TimeInterval? = nil,
+         onConnectivityFailure: @escaping @Sendable () async -> Bool = { false },
+         onOutcome: @escaping @Sendable (Bool) -> Void = { _ in }) {
         self.token = token
         self.customHeaders = customHeaders
         self.onOutcome = onOutcome
+        self.onConnectivityFailure = onConnectivityFailure
+        self.connectionTimeout = connectionTimeout
         self.session = session
         self.url = EventStream.websocketURL(from: baseURL)
         var captured: AsyncStream<Frame>.Continuation!
@@ -61,6 +70,11 @@ final class TerminalSocket: @unchecked Sendable {
         }
         task = newTask
         healthMonitor = monitor
+        if let connectionTimeout {
+            let timer = DispatchWorkItem { [weak self] in self?.receiveFailure(URLError(.timedOut), onlyBeforeReady: true) }
+            connectionTimer = timer
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + connectionTimeout, execute: timer)
+        }
         newTask.resume()
         monitor.start()
         lock.unlock()
@@ -80,14 +94,43 @@ final class TerminalSocket: @unchecked Sendable {
             guard let self else { return }
             switch result {
             case .failure(let error):
-                self.finish(reason: error.localizedDescription)
+                self.receiveFailure(error)
             case .success(let message):
+                guard self.lock.withLock({ !self.isClosed && !self.recoveringConnection }) else { return }
                 self.lock.withLock { self.healthMonitor }?.recordMessage()
                 self.handle(message)
                 self.lock.lock(); let closed = self.isClosed; self.lock.unlock()
                 if !closed { self.receiveLoop() }
             }
         }
+    }
+
+    private func receiveFailure(_ error: Error, onlyBeforeReady: Bool = false) {
+        guard lock.withLock({
+            guard !isClosed, !recoveringConnection, !(onlyBeforeReady && connectionEstablished) else { return false }
+            recoveringConnection = true
+            connectionTimer?.cancel()
+            connectionTimer = nil
+            return true
+        }) else { return }
+        lock.withLock { task }?.cancel(with: .goingAway, reason: nil)
+        FailoverDiagnostics.record("websocket failure code=\((error as NSError).code) port=\(url.port ?? 0)")
+        Task { [weak self] in
+            guard let self else { return }
+            let changed: Bool
+            if EndpointFailover.isConnectivityFailure(error) { changed = await self.onConnectivityFailure() }
+            else { changed = false }
+            self.finish(reason: changed ? CloseReason.endpointChanged : error.localizedDescription)
+        }
+    }
+
+    private func connected() {
+        lock.withLock {
+            connectionEstablished = true
+            connectionTimer?.cancel()
+            connectionTimer = nil
+        }
+        onOutcome(true)
     }
 
     private func finish(reason: String?) {
@@ -98,6 +141,8 @@ final class TerminalSocket: @unchecked Sendable {
         lock.lock()
         guard !isClosed else { lock.unlock(); return }
         isClosed = true
+        connectionTimer?.cancel()
+        connectionTimer = nil
         let t = task
         let monitor = healthMonitor
         task = nil
@@ -122,7 +167,7 @@ final class TerminalSocket: @unchecked Sendable {
             return  // attach-protocol ({type,…}) or malformed — not ours
         }
         if channel == "__ready__" {
-            onOutcome(true)
+            connected()
             continuation.yield(.ready)
         } else if channel.hasPrefix(Self.outputPrefix) {
             let id = String(channel.dropFirst(Self.outputPrefix.count))

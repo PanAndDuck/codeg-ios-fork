@@ -118,7 +118,10 @@ final class ServerStore {
         let endpoint = activeEndpoint(for: saved)
         guard let baseURL = endpoint.baseURL, let token = token(for: saved) else { return nil }
         let transport = ConnectionTransport(baseURL: baseURL, token: token, customHeaders: customHeaders(for: saved),
-                                            sessions: .init(baseURL: baseURL, pin: endpoint.pinnedCertSHA256)) { [weak self] generation, source, success in
+                                            sessions: sessions(for: saved, endpoint: endpoint),
+                                            onConnectivityFailure: { [weak self] generation, source in
+            await self?.recoverConnectivity(id: saved.id, generation: generation, source: source)
+        }) { [weak self] generation, source, success in
             Task { @MainActor [weak self] in
                 self?.recordOutcome(id: saved.id, generation: generation, source: source, success: success)
             }
@@ -167,6 +170,7 @@ final class ServerStore {
         }
         guard probeTasks[id] == nil, selectors[id, default: EndpointSelector()].needsProbe else { return }
         let generation = UUID()
+        FailoverDiagnostics.record("selection start generation=\(generation)")
         probeGenerations[id] = generation
         let headers = customHeaders(for: profile)
         let wifi = onWiFi
@@ -178,27 +182,51 @@ final class ServerStore {
             guard !Task.isCancelled, let self, self.probeGenerations[id] == generation,
                   self.servers.contains(where: { $0.id == id && $0.connectionIdentity == profile.connectionIdentity }) else { return }
             self.probeTasks[id] = nil
+            let retryGeneration = self.selectors[id]?.failedEndpoint != nil ? self.transports[id]?.snapshot.generation : nil
             self.selectors[id, default: EndpointSelector()].accept(onWiFi: wifi, primaryHealthy: results.0, secondaryHealthy: results.1)
             let choice = self.selectors[id]?.choice ?? .primary
+            FailoverDiagnostics.record("selection result primary=\(results.0) secondary=\(results.1) choice=\(choice.rawValue)")
             let oldChoice = self.activeEndpoints[id] ?? .primary
             self.activeEndpoints[id] = choice
-            if choice != oldChoice { self.replaceTransport(for: profile, choice: choice) }
+            if choice != oldChoice { self.replaceTransport(for: profile, choice: choice, retryFromGeneration: retryGeneration) }
         }
     }
 
+    private func recoverConnectivity(id: UUID, generation: UUID, source: EndpointSelector.Source) async {
+        guard transports[id]?.isCurrent(generation) == true,
+              servers.first(where: { $0.id == id })?.secondaryEndpoint != nil else { return }
+        FailoverDiagnostics.record("connectivity failure generation=\(generation) source=\(source)")
+        // The first failure supersedes a startup/path probe; concurrent failures
+        // from this generation join the same new selection instead of restarting it.
+        if selectors[id]?.failedEndpoint == nil {
+            probeTasks.removeValue(forKey: id)?.cancel()
+            selectors[id, default: EndpointSelector()].recordConnectivityFailure()
+            scheduleSelection(id)
+        }
+        await probeTasks[id]?.value
+    }
+
     private func recordOutcome(id: UUID, generation: UUID, source: EndpointSelector.Source, success: Bool) {
+        FailoverDiagnostics.record("outcome generation=\(generation) source=\(source) success=\(success)")
         guard transports[id]?.isCurrent(generation) == true else { return }
         if success { selectors[id, default: EndpointSelector()].recordSuccess(source: source) }
         else { selectors[id, default: EndpointSelector()].recordFailure(source: source) }
         if !success { scheduleSelection(id) }
     }
 
-    private func replaceTransport(for profile: ServerProfile, choice: EndpointSelector.Endpoint) {
+    private func replaceTransport(for profile: ServerProfile, choice: EndpointSelector.Endpoint,
+                                  retryFromGeneration: UUID? = nil) {
         guard let transport = transports[profile.id] else { return }
         let endpoint = choice == .secondary ? profile.secondaryEndpoint ?? profile.primaryEndpoint : profile.primaryEndpoint
         guard let baseURL = endpoint.baseURL, let token = token(for: profile) else { transport.invalidate(); return }
         transport.replace(baseURL: baseURL, token: token, customHeaders: customHeaders(for: profile),
-                          sessions: .init(baseURL: baseURL, pin: endpoint.pinnedCertSHA256))
+                          sessions: sessions(for: profile, endpoint: endpoint), retryFromGeneration: retryFromGeneration)
+    }
+
+    private func sessions(for profile: ServerProfile, endpoint: ServerEndpoint) -> SessionFactory.Sessions {
+        let isLAN = endpoint == profile.primaryEndpoint && profile.pairingMode != "relay"
+        let timeout: TimeInterval? = profile.secondaryEndpoint == nil ? nil : (isLAN ? 1.5 : 5)
+        return .init(baseURL: endpoint.baseURL!, pin: endpoint.pinnedCertSHA256, connectionTimeout: timeout)
     }
 
     private func resetSelection(_ id: UUID) {

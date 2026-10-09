@@ -1136,6 +1136,17 @@ final class SessionDetailViewModel {
     /// until snapshot/replay confirms attach. There is exactly one
     /// iterator over `frames` — the consumer loop — so frames are never dropped.
     private func openStream(connectionID conn: String, live: LiveTurn) async throws {
+        do {
+            try await openStreamAttempt(connectionID: conn, live: live)
+        } catch APIError.connectionLost(let reason) where reason == EventStream.CloseReason.endpointChanged {
+            // Selection has published the replacement endpoint before closing
+            // the old socket. No prompt has been sent; retry attach exactly once.
+            try Task.checkCancellation()
+            try await openStreamAttempt(connectionID: conn, live: live)
+        }
+    }
+
+    private func openStreamAttempt(connectionID conn: String, live: LiveTurn) async throws {
         closeStream()
         reconnectSchedule.reset()
         seqTracker.bind(to: conn)
@@ -1294,6 +1305,7 @@ final class SessionDetailViewModel {
     private func streamFailed(connectionID conn: String, reason: String?, initialSend: Bool, reattach: Bool) {
         if initialSend, readyContinuation != nil {
             let error: APIError = reason == "connection_gone" ? .streamGone
+                : reason == EventStream.CloseReason.endpointChanged ? .connectionLost(EventStream.CloseReason.endpointChanged)
                 : .transport(reason ?? "The event stream closed unexpectedly.")
             resumeReady(throwing: error)
             closeStream()

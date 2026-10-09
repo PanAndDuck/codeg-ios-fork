@@ -27,6 +27,8 @@ struct CodegClient: Sendable {
         let snapshot = transport.snapshot
         let stream = EventStream(baseURL: snapshot.baseURL, token: snapshot.token,
                                  session: snapshot.session(.stream), customHeaders: snapshot.customHeaders,
+                                 connectionTimeout: snapshot.sessions.connectionTimeout,
+                                 onConnectivityFailure: { [transport] in await transport.recover(snapshot, source: .webSocket) },
                                  onOutcome: { [transport] success in transport.report(snapshot, source: .webSocket, success: success) })
         stream.endpointRegistration = transport.register(generation: snapshot.generation) { [weak stream] in
             stream?.close(reason: EventStream.CloseReason.endpointChanged)
@@ -38,6 +40,8 @@ struct CodegClient: Sendable {
         let snapshot = transport.snapshot
         let socket = TerminalSocket(baseURL: snapshot.baseURL, token: snapshot.token,
                                     session: snapshot.session(.stream), customHeaders: snapshot.customHeaders,
+                                    connectionTimeout: snapshot.sessions.connectionTimeout,
+                                    onConnectivityFailure: { [transport] in await transport.recover(snapshot, source: .webSocket) },
                                     onOutcome: { [transport] success in transport.report(snapshot, source: .webSocket, success: success) })
         socket.endpointRegistration = transport.register(generation: snapshot.generation) { [weak socket] in
             socket?.close(reason: EventStream.CloseReason.endpointChanged)
@@ -47,12 +51,10 @@ struct CodegClient: Sendable {
 
     // MARK: - Endpoints
 
-    /// Validate connectivity + auth for a server profile. Uses the snappier read
-    /// session (15s) so a dead LAN host surfaces as offline in ~15s rather than
-    /// the 30s default — this endpoint normally answers in well under a second,
-    /// and it backs the per-server status dots and the editor's Test Connection.
+    /// Status dots/editor probes never silently wait for connectivity. Even a
+    /// single-endpoint profile has a five-second total health-check budget.
     func health() async throws -> HealthResponse {
-        try await postJSON("health", EmptyBody(), kind: .read)
+        try await postJSON("health", EmptyBody(), kind: .health)
     }
 
     /// All projects/folders known to the server.
@@ -384,6 +386,11 @@ struct CodegClient: Sendable {
     /// shared encoder/decoder would otherwise mangle (e.g. delegation settings).
     func send(_ path: String, rawBody: Data, session: URLSession? = nil,
               kind: SessionFactory.Kind = .standard) async throws -> Data {
+        try await sendAttempt(path, rawBody: rawBody, session: session, kind: kind, retryAllowed: true)
+    }
+
+    private func sendAttempt(_ path: String, rawBody: Data, session: URLSession?,
+                             kind: SessionFactory.Kind, retryAllowed: Bool) async throws -> Data {
         let snapshot = transport.snapshot
         guard transport.isCurrent(snapshot.generation) else {
             throw APIError.connectionLost(EventStream.CloseReason.endpointChanged)
@@ -391,10 +398,11 @@ struct CodegClient: Sendable {
         guard snapshot.sessions.pin == nil || snapshot.baseURL.scheme?.lowercased() == "https" else {
             throw APIError.invalidURL
         }
-        let session = session ?? snapshot.session(kind)
+        let requestSession = session ?? snapshot.session(kind)
         let trust = snapshot.sessions.requestEvaluator()
         let url = snapshot.baseURL.appendingPathComponent("api").appendingPathComponent(path)
         var request = URLRequest(url: url)
+        request.timeoutInterval = requestSession.configuration.timeoutIntervalForRequest
         request.httpMethod = "POST"
         request.setValue("Bearer \(snapshot.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -403,17 +411,31 @@ struct CodegClient: Sendable {
 
         let data: Data
         let response: URLResponse
+        FailoverDiagnostics.record("http start path=\(path) generation=\(snapshot.generation) port=\(snapshot.baseURL.port ?? 0)")
         do {
-            (data, response) = try await snapshot.sessions.data(for: request, session: session, delegate: trust)
+            (data, response) = try await snapshot.sessions.data(for: request, session: requestSession, delegate: trust)
         } catch {
-            guard transport.isCurrent(snapshot.generation) else {
-                throw APIError.connectionLost(EventStream.CloseReason.endpointChanged)
-            }
+            FailoverDiagnostics.record("http failure path=\(path) generation=\(snapshot.generation) code=\((error as NSError).code)")
+            if Task.isCancelled { throw APIError.cancelled }
             if let fingerprint = trust.untrustedFingerprint {
                 transport.report(snapshot, source: .http, success: false)
                 throw APIError.untrustedCertificate(fingerprint: fingerprint)
             }
+            let replacedCancellation = APIError.isCancellation(error)
+                && snapshot.sessions.cancelledForReplacement && transport.canRetry(snapshot)
+            if EndpointFailover.isConnectivityFailure(error) || replacedCancellation {
+                let changed = await transport.recover(snapshot, source: .http)
+                if retryAllowed && changed && EndpointFailover.mayReplay(path: path, kind: kind, sentBodyBytes: trust.sentBodyBytes) {
+                    FailoverDiagnostics.record("http retry path=\(path) after=\(snapshot.generation)")
+                    return try await sendAttempt(path, rawBody: rawBody, session: session, kind: kind, retryAllowed: false)
+                }
+            }
+            if Task.isCancelled { throw APIError.cancelled }
             let mapped = APIError.fromTransport(error)
+            if case .tls = mapped { throw mapped }
+            guard transport.isCurrent(snapshot.generation) else {
+                throw APIError.connectionLost(EventStream.CloseReason.endpointChanged)
+            }
             if !APIError.isCancellation(mapped) { transport.report(snapshot, source: .http, success: false) }
             throw mapped
         }
@@ -437,6 +459,7 @@ struct CodegClient: Sendable {
             throw error
         }
         transport.report(snapshot, source: .http, success: true)
+        FailoverDiagnostics.record("http success path=\(path) generation=\(snapshot.generation)")
         return data
     }
 
