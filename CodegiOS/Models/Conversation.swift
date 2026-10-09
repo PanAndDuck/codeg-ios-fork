@@ -155,6 +155,10 @@ struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
     /// Note: pinning does NOT bump `updatedAt` server-side — the "Pinned" group
     /// sorts by this timestamp instead.
     var pinnedAt: Date? = nil
+    /// Absent on older servers. Kept independently of the optional folder list.
+    var kind: String? = nil
+
+    var isChat: Bool { kind == "chat" }
 
     /// Non-empty, trimmed user-provided title, or `nil` for an unnamed session.
     /// Render this verbatim (user data, never localized) and fall back to a

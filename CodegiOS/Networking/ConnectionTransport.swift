@@ -3,6 +3,7 @@ import Foundation
 /// A stable handle retained by feature models. Each operation captures one
 /// immutable generation, so URL, credentials and TLS policy cannot be mixed.
 final class ConnectionTransport: @unchecked Sendable {
+    let chatAvailability = ChatEndpointAvailability()
     typealias Source = EndpointSelector.Source
     struct Snapshot: Sendable {
         let generation = UUID()

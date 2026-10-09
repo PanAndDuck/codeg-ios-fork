@@ -35,6 +35,8 @@ struct SessionListView: View {
 
     @State private var viewModel: SessionListViewModel
     @State private var searchText = ""
+    @State private var showFolderBrowser = false
+    @State private var folderError: String?
     /// The group currently zoom-expanded to fullscreen, or `nil`.
     @State private var expandedSection: ChatExpand?
     /// Shared namespace pairing each card's `matchedTransitionSource` with the
@@ -119,6 +121,20 @@ struct SessionListView: View {
         .task(id: serverRevision) {
             await viewModel.reload(client: client)
         }
+        .sheet(isPresented: $showFolderBrowser) {
+            DirectoryBrowserView(client: client) { path in
+                Task {
+                    do {
+                        _ = try await client.openFolder(path: path)
+                        await viewModel.refresh()
+                        NotificationCenter.default.post(name: .foldersDidChange, object: nil)
+                    } catch { folderError = APIError.userMessage(error) }
+                }
+            }
+        }
+        .alert("Couldn’t Open Folder", isPresented: Binding(get: { folderError != nil }, set: { if !$0 { folderError = nil } })) {
+            Button("OK", role: .cancel) { folderError = nil }
+        } message: { Text(folderError ?? "") }
         // A conversation mutated from the detail screen (rename / pin / status /
         // delete) posts this; refetch so the row reflects it — or drops, if
         // deleted — instead of going stale (there's no on-appear reload).
@@ -155,9 +171,10 @@ struct SessionListView: View {
         let pinnedConvs = viewModel.pinned(searchText: searchText)
         let groups = viewModel.folderGroups(searchText: searchText)
         let orphans = viewModel.ungrouped(searchText: searchText)
+        let chats = viewModel.chats(searchText: searchText)
         // Nothing to show in any group (empty server, folders-but-no-sessions, or
         // a search with no matches) → the empty state, not a wall of empty cards.
-        let isEmpty = pinnedConvs.isEmpty && orphans.isEmpty
+        let isEmpty = pinnedConvs.isEmpty && orphans.isEmpty && chats.isEmpty
             && groups.allSatisfy { $0.conversations.isEmpty }
 
         return ScrollView {
@@ -220,6 +237,10 @@ struct SessionListView: View {
                  tint: Color(hexString: group.folder.color) ?? Theme.accent,
                  conversations: group.conversations, showFolder: false)
         }
+        let chats = viewModel.chats(searchText: searchText)
+        if !chats.isEmpty {
+            card(.chat, title: "Chat", tint: Theme.accent, conversations: chats, showFolder: false)
+        }
         if !orphans.isEmpty {
             card(.other, title: "Other",
                  tint: Theme.textSecondary, conversations: orphans, showFolder: true)
@@ -251,7 +272,7 @@ struct SessionListView: View {
         // pinned / folder-groups / orphans are mutually exclusive, so this never
         // double-counts a conversation. Lazy so a broad match set stays smooth on
         // large servers (matches the old flat list's virtualization).
-        let matches = pinned + groups.flatMap(\.conversations) + orphans
+        let matches = pinned + viewModel.chats(searchText: searchText) + groups.flatMap(\.conversations) + orphans
         LazyVStack(spacing: 0) {
             ForEach(matches) { conv in
                 SessionRow(
@@ -293,6 +314,8 @@ struct SessionListView: View {
     private func sectionData(_ section: ChatExpand)
         -> (title: String, tint: Color, conversations: [ConversationSummary], showFolder: Bool) {
         switch section {
+        case .chat:
+            return ("Chat", Theme.accent, viewModel.chats(searchText: ""), false)
         case .pinned:
             return ("Pinned", Theme.accent, viewModel.pinned(searchText: ""), true)
         case .folder(let fid):
@@ -307,11 +330,13 @@ struct SessionListView: View {
     /// One expandable chat section. Its `id` doubles as the zoom-transition
     /// source id and selects the live row list in `sectionData`.
     private enum ChatExpand: Identifiable, Hashable {
+        case chat
         case pinned
         case folder(Int)
         case other
         var id: String {
             switch self {
+            case .chat: return "chat"
             case .pinned: return "pinned"
             case .folder(let fid): return "folder-\(fid)"
             case .other: return "other"
@@ -333,13 +358,24 @@ struct SessionListView: View {
                 message: "No sessions match \"\(searchText)\"."
             )
         } else if let onNewSession {
-            EmptyStateView(
-                icon: "tray",
-                title: "No Sessions",
-                message: "Start your first task and watch the agent work from here.",
-                actionTitle: "Start a Task",
-                action: onNewSession
-            )
+            if viewModel.sortedFolders.isEmpty {
+                VStack(spacing: 16) {
+                    EmptyStateView(icon: "bubble.left.and.bubble.right", title: "No Sessions",
+                                   message: "No folders yet. Start a chat or open a folder.")
+                    if client.transport.chatAvailability.isAvailable {
+                        Button("Start chat (no folder)", action: onNewSession)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    Button("Open Folder") { showFolderBrowser = true }
+                        .buttonStyle(.bordered)
+                }
+            } else {
+                EmptyStateView(
+                    icon: "tray", title: "No Sessions",
+                    message: "Start your first task and watch the agent work from here.",
+                    actionTitle: "Start a Task", action: onNewSession
+                )
+            }
         } else {
             EmptyStateView(
                 icon: "tray",

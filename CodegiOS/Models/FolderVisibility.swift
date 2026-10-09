@@ -44,7 +44,7 @@ enum FolderVisibility {
     /// Top-level folders only (`parentId == nil`) — the new-session folder picker
     /// must not target a worktree directly. Port of `filterTopLevelFolders`.
     static func filterTopLevel(_ folders: [FolderDetail]) -> [FolderDetail] {
-        folders.filter { $0.parentId == nil }
+        folders.filter { $0.parentId == nil && $0.kind != .chat }
     }
 
     /// The root repo folder for `folder` (itself when top-level, or when the

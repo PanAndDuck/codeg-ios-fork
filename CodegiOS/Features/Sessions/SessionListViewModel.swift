@@ -108,6 +108,15 @@ final class SessionListViewModel {
             .sorted { ($0.pinnedAt ?? .distantPast) > ($1.pinnedAt ?? .distantPast) }
     }
 
+    private func isChat(_ conversation: ConversationSummary) -> Bool {
+        conversation.isChat || folders.contains { $0.id == conversation.folderId && $0.kind == .chat }
+    }
+
+    func chats(searchText: String) -> [ConversationSummary] {
+        matching(conversations.filter { !$0.isPinned && isChat($0) }, searchText)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     /// One group per folder (in `sortedFolders` order) holding that folder's
     /// non-pinned conversations, newest-first. With no search every folder is
     /// included — even empty ones, so their collapsible header still shows; when
@@ -117,7 +126,7 @@ final class SessionListViewModel {
         // Group by the merge target so a worktree's conversations land under its
         // root folder's header (matching the web), not a hidden worktree row.
         let map = childToParent
-        let unpinnedByGroup = Dictionary(grouping: conversations.filter { !$0.isPinned }) {
+        let unpinnedByGroup = Dictionary(grouping: conversations.filter { !$0.isPinned && !isChat($0) }) {
             FolderVisibility.mergedFolderId($0.folderId, childToParent: map)
         }
         return sortedFolders.compactMap { folder in
@@ -136,7 +145,7 @@ final class SessionListViewModel {
         let map = childToParent
         let known = Set(sortedFolders.map(\.id))
         return matching(conversations.filter {
-            !$0.isPinned && !known.contains(FolderVisibility.mergedFolderId($0.folderId, childToParent: map))
+            !$0.isPinned && !isChat($0) && !known.contains(FolderVisibility.mergedFolderId($0.folderId, childToParent: map))
         }, searchText)
         .sorted { $0.updatedAt > $1.updatedAt }
     }
