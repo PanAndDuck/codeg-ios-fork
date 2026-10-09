@@ -41,10 +41,12 @@ enum Route: Hashable {
 struct NewSessionRequest: Hashable, Identifiable {
     let id: UUID
     var preselectedFolderID: Int?
+    var isChat: Bool
 
-    init(id: UUID = UUID(), preselectedFolderID: Int? = nil) {
+    init(id: UUID = UUID(), preselectedFolderID: Int? = nil, isChat: Bool = false) {
         self.id = id
         self.preselectedFolderID = preselectedFolderID
+        self.isChat = isChat
     }
 }
 

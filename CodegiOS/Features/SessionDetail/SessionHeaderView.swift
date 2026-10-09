@@ -27,7 +27,7 @@ struct SessionHeaderView: View {
                 if let model = summary.model, !model.isEmpty {
                     MetaChip(symbol: "cpu", text: model, mono: true)
                 }
-                if let branch = summary.gitBranch, !branch.isEmpty {
+                if !summary.isChat, let branch = summary.gitBranch, !branch.isEmpty {
                     MetaChip(symbol: "arrow.triangle.branch", text: branch, mono: true)
                 }
             }

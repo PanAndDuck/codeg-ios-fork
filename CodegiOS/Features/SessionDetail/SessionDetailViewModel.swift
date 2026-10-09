@@ -31,6 +31,13 @@ final class SessionDetailViewModel {
     // MARK: - Inputs
 
     private let client: CodegClient
+    private let chatDraft: ChatDraftSession
+    private var selectedChat = false
+
+    var chatAvailable: Bool { chatDraft.isAvailable }
+    var isChatMode: Bool { selectedChat || summary?.isChat == true || folder?.kind == .chat }
+    var workingDirectory: String? { isChatMode ? (folder?.path ?? chatDraft.directory) : folder?.path }
+    var showsRepositoryControls: Bool { !isChatMode && folder != nil }
 
     /// What this screen is bound to: an existing conversation, or a brand-new
     /// task that adopts its conversation id from the `conversation_linked`
@@ -219,12 +226,14 @@ final class SessionDetailViewModel {
 
     private init(client: CodegClient, mode: Mode) {
         self.client = client
+        self.chatDraft = ChatDraftSession(client: client)
         self.mode = mode
         switch mode {
         case .existing(let id):
             self.conversationID = id
         case .new(let request):
             self.newRequest = request
+            self.selectedChat = request.isChat
             // Agent/folder are chosen in-page (from the agent button in the
             // navigation bar); their defaults are resolved in `load()` from the
             // server's folder + agent lists, honoring any preselected folder.
@@ -561,7 +570,7 @@ final class SessionDetailViewModel {
         allFolders = all
         availableFolders = FolderVisibility.filterTopLevel(open)
             .sorted { $0.lastOpenedAt > $1.lastOpenedAt }
-        if folder == nil {
+        if folder == nil, !selectedChat {
             folder = all.first { $0.id == preselectedFolderID } ?? availableFolders.first
         }
         currentBranch = folder?.gitBranch
@@ -573,6 +582,9 @@ final class SessionDetailViewModel {
             }
         }
         if let agent = selectedAgent { insertModel.agentType = agent }
+        if selectedChat || availableFolders.isEmpty && folder == nil {
+            await selectChat()
+        }
     }
 
     // MARK: - Draft selection (new session only)
@@ -589,10 +601,40 @@ final class SessionDetailViewModel {
     /// Change the draft's folder before the first send. The folder is the agent's
     /// working dir, so a change likewise invalidates any resolved connection.
     func selectFolder(_ newFolder: FolderDetail) {
-        guard isDraftEditable, newFolder.id != folder?.id else { return }
+        guard isDraftEditable, newFolder.kind != .chat, newFolder.id != folder?.id || selectedChat else { return }
+        selectedChat = false
         folder = newFolder
         currentBranch = newFolder.gitBranch
         resetDraftConnection()
+    }
+
+    /// Prepares a real cwd before the options sheet can probe/apply agent modes.
+    func selectChat() async {
+        guard isDraftEditable, chatAvailable else { return }
+        if !selectedChat || folder != nil {
+            selectedChat = true
+            folder = nil
+            currentBranch = nil
+            resetDraftConnection()
+        }
+        do {
+            _ = try await chatDraft.prepareDirectory()
+        } catch {
+            guard selectedChat else { return }
+            notice = APIError.userMessage(error)
+            if !chatAvailable { selectedChat = false }
+        }
+    }
+
+    func openFolder(path: String) async {
+        guard isDraftEditable else { return }
+        do {
+            let opened = try await client.openFolder(path: path)
+            if !allFolders.contains(where: { $0.id == opened.id }) { allFolders.append(opened) }
+            if !availableFolders.contains(where: { $0.id == opened.id }) { availableFolders.append(opened) }
+            selectFolder(opened)
+            NotificationCenter.default.post(name: .foldersDidChange, object: nil)
+        } catch { notice = APIError.userMessage(error) }
     }
 
     /// Drop a connection the options sheet resolved before any send, so the next
@@ -608,7 +650,7 @@ final class SessionDetailViewModel {
     /// is no folder path (no git context) or the call fails (surfaced via notice).
     /// Also refreshes the current-branch label opportunistically.
     func loadBranches() async -> GitBranchList? {
-        guard let path = folder?.path else { return nil }
+        guard showsRepositoryControls, let path = folder?.path else { return nil }
         do {
             let list = try await client.gitListAllBranches(path: path)
             if let cur = try? await client.gitCurrentBranch(path: path), !cur.isEmpty {
@@ -640,7 +682,7 @@ final class SessionDetailViewModel {
     /// navigation since the view model has no nav handle). Surfaces failures via
     /// `notice`.
     func switchBranch(_ branch: String, isRemote: Bool) async -> BranchSwitchOutcome {
-        guard let active = folder else { return .failed }
+        guard showsRepositoryControls, let active = folder else { return .failed }
         if branch == currentBranch { return .noop }
 
         // Find where the branch is checked out (skip for a remote pick — those
@@ -765,7 +807,7 @@ final class SessionDetailViewModel {
     /// Create `branch` (off `startPoint`; nil = current HEAD) and check it out.
     func createBranch(_ branch: String, from startPoint: String?) async -> Bool {
         let name = branch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let path = folder?.path, !name.isEmpty else { return false }
+        guard showsRepositoryControls, let path = folder?.path, !name.isEmpty else { return false }
         do {
             try await client.gitNewBranch(path: path, branchName: name, startPoint: startPoint)
             currentBranch = name
@@ -819,15 +861,15 @@ final class SessionDetailViewModel {
     func send(overrideText: String? = nil) {
         let text = (overrideText ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         let sending = overrideText == nil ? attachments : []
-        guard (!text.isEmpty || !sending.isEmpty), !isInFlight else { return }
+        guard (!text.isEmpty || !sending.isEmpty), !isInFlight, sendPipelineID == nil else { return }
         // Identity comes from the loaded summary (existing conversation) or the
         // new-task request; without either the screen isn't ready to send.
         guard summary != nil || newRequest != nil else { return }
         // A draft (no linked summary yet) needs a folder + agent before it can
         // connect; lock the pickers the moment its first send begins.
         if summary == nil {
-            guard folder != nil, selectedAgent != nil else {
-                notice = "Pick a folder and agent first."
+            guard selectedAgent != nil, folder != nil || isChatMode && chatAvailable else {
+                notice = String(localized: "Choose an agent and a folder, or start a chat without a folder.")
                 return
             }
             hasStartedFirstSend = true
@@ -953,7 +995,7 @@ final class SessionDetailViewModel {
             let prefs = preferredSelectors
             let conn = try await client.connect(
                 agentType: agentTypeForUI,
-                workingDir: folder?.path,
+                workingDir: workingDirectory,
                 sessionId: summary?.externalId,
                 preferredModeId: prefs.modeId,
                 preferredConfigValues: prefs.configValues
@@ -994,6 +1036,7 @@ final class SessionDetailViewModel {
                                        clientMessageID: clientMessageID, snapshot: snapshot,
                                        confirmedRejection: PromptAcceptance.isConfirmedRejection(error)) {
         case .rejected:
+            if !chatAvailable, conversationID == nil { selectedChat = false }
             discardOptimisticSend(userTurnID: userTurnID, live: liveTurn ?? live,
                                   restoringDraft: text, restoringAttachments: attachments)
             notice = APIError.userMessage(error)
@@ -1031,7 +1074,7 @@ final class SessionDetailViewModel {
         let prefs = preferredSelectors
         return try await client.connect(
             agentType: agentTypeForUI,
-            workingDir: folder?.path,
+            workingDir: workingDirectory,
             sessionId: summary?.externalId,
             preferredModeId: prefs.modeId,
             preferredConfigValues: prefs.configValues
@@ -1046,6 +1089,10 @@ final class SessionDetailViewModel {
     /// connection the server has since garbage-collected. The result is cached so
     /// the next send reuses the same connection.
     func resolveConnectionForOptions() async throws -> String {
+        if isChatMode, conversationID == nil {
+            _ = try await chatDraft.prepareDirectory()
+            if let connectionID { return connectionID }
+        }
         if let id = conversationID,
            let found = try await client.findConnection(
                conversationId: id,
@@ -1058,7 +1105,7 @@ final class SessionDetailViewModel {
         let prefs = preferredSelectors
         let conn = try await client.connect(
             agentType: agentTypeForUI,
-            workingDir: folder?.path,
+            workingDir: workingDirectory,
             sessionId: summary?.externalId,
             preferredModeId: prefs.modeId,
             preferredConfigValues: prefs.configValues
@@ -1095,14 +1142,19 @@ final class SessionDetailViewModel {
     /// row was already created). On failure it throws into `runSend`'s `catch`,
     /// which rolls the optimistic send back.
     private func ensureConversationCreated(firstPromptText text: String) async throws {
-        guard conversationID == nil, let folderId = folder?.id, let agent = selectedAgent else { return }
-        let id = try await client.createConversation(
-            folderId: folderId,
-            agentType: agent,
-            title: Self.draftTitle(from: text)
-        )
+        guard conversationID == nil, let agent = selectedAgent else { return }
+        let id: Int
+        if isChatMode {
+            let result = try await chatDraft.createConversation(agent: agent, title: Self.draftTitle(from: text))
+            id = result.conversationId
+            folder = result.folder
+            if !allFolders.contains(where: { $0.id == result.folderId }) { allFolders.append(result.folder) }
+        } else {
+            guard let folderId = folder?.id else { return }
+            id = try await client.createConversation(folderId: folderId, agentType: agent, title: Self.draftTitle(from: text))
+            draftCreatedConversationID = id
+        }
         conversationID = id
-        draftCreatedConversationID = id
         currentBranch = folder?.gitBranch
         // Refresh this app's own session list so the new row shows there too.
         notifyConversationsChanged()
@@ -1667,7 +1719,7 @@ final class SessionDetailViewModel {
         }
         // The send failed before the server accepted it, so no conversation was
         // created — re-open the draft's agent/folder pickers for an edited retry.
-        if conversationID == nil { hasStartedFirstSend = false }
+        if conversationID == nil, !chatDraft.hasUnresolvedCreation { hasStartedFirstSend = false }
         // Don't clobber a fresh draft the user may have started typing.
         if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draft = text

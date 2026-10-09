@@ -11,6 +11,10 @@ struct NewSessionAgentConfig {
     let availableFolders: [FolderDetail]
     let selectedFolder: FolderDetail?
     let onSelectFolder: (FolderDetail) -> Void
+    var isChat = false
+    var chatAvailable = true
+    var onSelectChat: () -> Void = {}
+    var onOpenFolder: () -> Void = {}
 }
 
 /// What a branch switch resolved to, so the picker knows whether to dismiss in
@@ -89,7 +93,13 @@ struct AgentOptionsButton: View {
             .presentationBackground(Theme.bg)
         }
         .onChange(of: showSheet) { _, shown in
-            if shown { options.prepare(agentType: agentType, workingDir: workingDir) }
+            if shown, workingDir != nil { options.prepare(agentType: agentType, workingDir: workingDir) }
+        }
+        .onChange(of: workingDir) { _, path in
+            if showSheet, path != nil { options.prepare(agentType: agentType, workingDir: path) }
+        }
+        .onChange(of: agentType) { _, agent in
+            if showSheet, workingDir != nil { options.prepare(agentType: agent, workingDir: workingDir) }
         }
     }
 }
@@ -115,11 +125,18 @@ private struct AgentOptionsSheet: View {
                     VStack(alignment: .leading, spacing: 16) {
                         if let newSession {
                             agentPicker(newSession)
+                            OptionSection(title: Text("Workspace")) {
+                                folderMenuRow(newSession)
+                                if let branch, branch.folderPath != nil {
+                                    rowSeparator
+                                    branchLinkRow(branch)
+                                }
+                            }
                         }
                         // Folder + branch share one "Workspace" card: the folder
                         // (switchable on a draft, read-only on an existing session)
                         // above the branch selector.
-                        if let branch, branch.folderPath != nil {
+                        if newSession == nil, let branch, branch.folderPath != nil {
                             workspaceSection(newSession: newSession, branch: branch)
                         }
 
@@ -170,8 +187,6 @@ private struct AgentOptionsSheet: View {
                     ForEach(ns.availableAgents) { agent in
                         agentChoice(agent, names: ns.agentNames, isSelected: agent == ns.selectedAgent) {
                             ns.onSelectAgent(agent)
-                            // Reload this agent's options + working dir in place.
-                            options.prepare(agentType: agent, workingDir: ns.selectedFolder?.path)
                         }
                     }
                 }
@@ -244,24 +259,35 @@ private struct AgentOptionsSheet: View {
         let binding = Binding<Int?>(
             get: { ns.selectedFolder?.id },
             set: { id in
+                if id == nil { ns.onSelectChat(); return }
                 guard let folder = ns.availableFolders.first(where: { $0.id == id }) else { return }
                 ns.onSelectFolder(folder)
-                options.prepare(agentType: ns.selectedAgent, workingDir: folder.path)
             }
         )
         return Menu {
             Picker("Folder", selection: binding) {
+                if ns.chatAvailable {
+                    Label("Chat (no folder)", systemImage: "bubble.left.and.bubble.right").tag(nil as Int?)
+                }
                 ForEach(ns.availableFolders) { folder in
                     Label(folder.name, systemImage: "folder").tag(Optional(folder.id))
                 }
             }
+            Button("Open Folder", systemImage: "folder.badge.plus") {
+                dismissSheet()
+                ns.onOpenFolder()
+            }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "folder.fill")
+                Image(systemName: ns.isChat ? "bubble.left.and.bubble.right" : "folder.fill")
                     .font(.caption)
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    if let n = ns.selectedFolder?.name {
+                    if ns.isChat {
+                        Text("Chat (no folder)")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    } else if let n = ns.selectedFolder?.name {
                         Text(verbatim: n)
                             .font(.callout.weight(.medium))
                             .foregroundStyle(Theme.textPrimary)

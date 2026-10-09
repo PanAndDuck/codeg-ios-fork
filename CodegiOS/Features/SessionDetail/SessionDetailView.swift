@@ -29,6 +29,7 @@ struct SessionDetailView: View {
     @State private var renameText = ""
     @State private var showDetails = false
     @State private var showDeleteConfirm = false
+    @State private var showFolderBrowser = false
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int, activeEndpointLabel: String? = nil,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -80,7 +81,7 @@ struct SessionDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     AgentOptionsButton(
                         agentType: model.agentTypeForUI,
-                        workingDir: model.folder?.path,
+                        workingDir: model.workingDirectory,
                         isBusy: model.isInFlight,
                         options: model.agentOptions,
                         newSession: model.isDraftEditable ? NewSessionAgentConfig(
@@ -90,9 +91,13 @@ struct SessionDetailView: View {
                             onSelectAgent: { model.selectAgent($0) },
                             availableFolders: model.availableFolders,
                             selectedFolder: model.folder,
-                            onSelectFolder: { model.selectFolder($0) }
+                            onSelectFolder: { model.selectFolder($0) },
+                            isChat: model.isChatMode,
+                            chatAvailable: model.chatAvailable,
+                            onSelectChat: { Task { await model.selectChat() } },
+                            onOpenFolder: { showFolderBrowser = true }
                         ) : nil,
-                        branch: SessionBranchConfig(
+                        branch: model.showsRepositoryControls ? SessionBranchConfig(
                             // Root repo name when this session lives in a worktree.
                             folderName: model.displayFolderName,
                             folderPath: model.folder?.path,
@@ -103,7 +108,7 @@ struct SessionDetailView: View {
                             onOpenSession: { folderID in
                                 onOpenSession?(NewSessionRequest(preselectedFolderID: folderID))
                             }
-                        )
+                        ) : nil
                     )
                 }
                 // A "…" actions menu sits just after the agent avatar, available
@@ -147,6 +152,11 @@ struct SessionDetailView: View {
             }
         }
         .task { await model.load() }
+        .sheet(isPresented: $showFolderBrowser) {
+            DirectoryBrowserView(client: client) { path in
+                Task { await model.openFolder(path: path) }
+            }
+        }
         .onAppear { model.screenDidAppear() }
         .onDisappear { model.teardown() }
         // The live WebSocket is suspended (and often killed outright) while
@@ -244,8 +254,26 @@ struct SessionDetailView: View {
                         agent: model.selectedAgent,
                         agentNames: model.agentNames,
                         folder: model.folder,
+                        isChat: model.isChatMode,
                         isStarting: model.hasStartedFirstSend
                     )
+                    if model.isDraftEditable {
+                        HStack {
+                            if model.chatAvailable {
+                                Button("Start chat (no folder)", systemImage: "bubble.left.and.bubble.right") {
+                                    Task { await model.selectChat() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            Button("Open Folder", systemImage: "folder.badge.plus") { showFolderBrowser = true }
+                                .buttonStyle(.bordered)
+                        }
+                        if model.availableFolders.isEmpty {
+                            Text("No folders yet. Start a chat or open a folder.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
                 }
                 if model.isEmptyTranscript {
                     EmptyStateView(
@@ -383,6 +411,7 @@ private struct NewSessionHeaderCard: View {
     let agent: AgentType?
     var agentNames = AgentDisplayNames()
     let folder: FolderDetail?
+    var isChat = false
     let isStarting: Bool
 
     var body: some View {
@@ -391,7 +420,11 @@ private struct NewSessionHeaderCard: View {
                 if let agent {
                     AgentBadge(agent: agent, names: agentNames)
                 }
-                if let folder {
+                if isChat {
+                    Label("Chat (no folder)", systemImage: "bubble.left.and.bubble.right")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                } else if let folder {
                     HStack(spacing: 4) {
                         Image(systemName: "folder")
                             .font(.system(size: 9, weight: .semibold))

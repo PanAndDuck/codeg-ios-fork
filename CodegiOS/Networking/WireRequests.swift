@@ -86,6 +86,20 @@ struct CreateConversationBody: Encodable, Sendable {
     var title: String?
 }
 
+struct CreateChatConversationBody: Encodable, Sendable {
+    let agentType: AgentType
+    let title: String?
+    let existingDir: String?
+
+    private enum CodingKeys: String, CodingKey { case agentType, title, existingDir }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(agentType, forKey: .agentType)
+        try c.encode(title, forKey: .title)
+        try c.encode(existingDir, forKey: .existingDir)
+    }
+}
+
 /// Body for `acp_find_connection_for_conversation`. The server requires
 /// `agentType` (no default) and accepts an optional `sessionId` (`external_id`)
 /// used to match a connection in the pre-first-prompt window.
