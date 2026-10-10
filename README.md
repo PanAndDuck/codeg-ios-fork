@@ -11,8 +11,8 @@ This fork is based on **xintaofei/codeg-ios**, with modifications by **PanAndDuc
 - **无文件夹聊天 / Folderless chat:** start and manage chats without selecting a project folder.
 - **并行安装与测试 / Side-by-side builds and tests:** isolated Codeg-Fork flavor, XCTest suite, and optional UI-test target.
 
-**服务端兼容 / Server compatibility:** 标准 codeg 支持局域网与基础功能；中继配对需要带内置 relay client、支持 `/__codeg_relay/v1` 协议的 codeg 服务端。
-Stock codeg works for LAN/basic features. Relay pairing requires a codeg server with the built-in relay client implementing the `/__codeg_relay/v1` protocol. Optional features depend on the server's API support.
+**服务端兼容 / Server compatibility:** 标准 codeg 支持局域网与基础功能；中继配对需要带内置 relay client、支持 `/__codeg_relay/v1` 协议的 codeg 服务端，例如 [codeg-fork](https://github.com/PanAndDuck/codeg-fork)（提供各平台安装包和 `codeg-relay` 中继服务端）。
+Stock codeg works for LAN/basic features. Relay pairing requires a codeg server with the built-in relay client implementing the `/__codeg_relay/v1` protocol, such as [codeg-fork](https://github.com/PanAndDuck/codeg-fork) (desktop/server packages plus the `codeg-relay` server). Optional features depend on the server's API support.
 
 **构建 / Build:** 使用 Xcode 26、iOS 26 SDK、[XcodeGen](https://github.com/yonaskolb/XcodeGen) 与 Python 3。签名配置从示例复制并填写自己的 Team ID；已有本地配置时保留它。
 Use Xcode 26, the iOS 26 SDK, XcodeGen, and Python 3. Copy the signing example if no local override exists, then enter your own team ID for signed device builds. Simulator builds do not require signing.
