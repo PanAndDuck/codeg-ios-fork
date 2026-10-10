@@ -1,3 +1,39 @@
+# Codeg iOS 分支 / Codeg iOS Fork
+
+`codeg-ios-fork` 基于 [xintaofei/codeg-ios](https://github.com/xintaofei/codeg-ios)，由 **PanAndDuck** 修改，遵循 [Apache-2.0](LICENSE)。
+This fork is based on **xintaofei/codeg-ios**, with modifications by **PanAndDuck**, under **Apache-2.0**; upstream attribution is retained in [NOTICE](NOTICE).
+
+- **远程中继 / Remote relay:** QR/paste pairing, TLS certificate pinning and trust on first use (TOFU), fast LAN → relay failover, and custom headers.
+- **稳定流式回复 / Resilient streaming:** large snapshots, liveness checks and NWPathMonitor, unlimited reconnect attempts, sequence-based recovery, and finish-during-gap reconciliation.
+- **长对话 / Long transcripts:** transcript windows and older-page loading with a stable reading anchor.
+- **错误提示 / Error mapping:** actionable English and Simplified Chinese network, relay, authentication, and attachment errors.
+- **智能体兼容 / Agent compatibility:** custom and unknown agent types retain their server identities.
+- **无文件夹聊天 / Folderless chat:** start and manage chats without selecting a project folder.
+- **并行安装与测试 / Side-by-side builds and tests:** isolated Codeg-Fork flavor, XCTest suite, and optional UI-test target.
+
+**服务端兼容 / Server compatibility:** 标准 codeg 支持局域网与基础功能；中继配对需要带内置 relay client、支持 `/__codeg_relay/v1` 协议的 codeg 服务端。
+Stock codeg works for LAN/basic features. Relay pairing requires a codeg server with the built-in relay client implementing the `/__codeg_relay/v1` protocol. Optional features depend on the server's API support.
+
+**构建 / Build:** 使用 Xcode 26、iOS 26 SDK、[XcodeGen](https://github.com/yonyz/XcodeGen) 与 Python 3。签名配置从示例复制并填写自己的 Team ID；已有本地配置时保留它。
+Use Xcode 26, the iOS 26 SDK, XcodeGen, and Python 3. Copy the signing example if no local override exists, then enter your own team ID for signed device builds. Simulator builds do not require signing.
+
+```bash
+cp Config/Signing.local.xcconfig.example Config/Signing.local.xcconfig
+xcodegen generate
+scripts/build-fork.sh sim --name "iPhone 17"
+scripts/build-fork.sh test --name "iPhone 17"
+scripts/build-fork.sh generic-device
+# Optional physical-device build, installation, and launch:
+scripts/build-fork.sh device --device "<device-name>"
+```
+
+`sim` 会构建、启动模拟器并安装运行；`generic-device` 只构建和验证签名。请使用本机已有的模拟器名称。
+`sim` builds, boots, installs, and launches; `generic-device` builds and verifies signing without installation. Use an available simulator name. See the [fork user/developer guide](docs/FORK.md) for setup, pairing, tests, and troubleshooting.
+
+---
+
+以下保留上游 README / Original upstream README follows.
+
 # Codeg for iOS
 
 A native, universal (iPhone + iPad) SwiftUI client for the [codeg](https://github.com/xintaofei/codeg)

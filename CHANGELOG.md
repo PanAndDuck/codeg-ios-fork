@@ -8,6 +8,26 @@ Add changes under `## [Unreleased]` as you land them. When you cut a release,
 `scripts/release.sh` moves that section under a new version heading and reuses
 the text as the git tag message and the GitHub Release notes.
 
+## Unreleased (fork)
+
+### Added
+
+- Remote relay support with QR/paste pairing, TLS certificate pinning and TOFU,
+  fast LAN-to-relay failover, and custom request headers.
+- Resilient streaming with large snapshots, liveness and network-change checks,
+  unlimited reconnect attempts, sequence recovery, and reconciliation when a
+  reply finishes during a connection gap.
+- Windowed transcripts and older-page loading that preserve the reading anchor.
+- Localized error mapping for network, relay, authentication, and attachment failures.
+- Custom and unknown agent identities throughout sessions and agent selection.
+- Folderless chat creation and management alongside project conversations.
+- Side-by-side Codeg-Fork builds, XCTest coverage, and an optional UI-test target.
+
+### Changed
+
+- Published fork setup and troubleshooting guidance; replaced machine-specific
+  examples and E2E paths with portable configuration and removed internal logs.
+
 ## [Unreleased]
 
 ### Added

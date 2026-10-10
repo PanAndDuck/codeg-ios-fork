@@ -11,7 +11,7 @@ Usage: scripts/build-fork.sh <command> [options]
   sim [--name "iPhone 17"]     Build, boot, install and launch on a simulator
   test [--name "iPhone 17"]    Run CodegiOSTests on a simulator
   generic-device              Build and sign for generic/platform=iOS; no install
-  device [--device "<device-name>"]     Build, install and launch on the named physical device
+  device --device "<device-name>"  Build, install and launch on the named physical device
 
 Signing and the optional CODEG_BUNDLE_ID_SUFFIX come from
 Config/Signing.local.xcconfig. See docs/FORK.md.
@@ -25,7 +25,7 @@ case "$COMMAND" in
   *) usage; die "choose sim, test, device, or generic-device" ;;
 esac
 SIM_NAME="iPhone 17"
-DEVICE_NAME="<device-name>"
+DEVICE_NAME=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name)
@@ -40,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown argument: $1" ;;
   esac
 done
+[[ "$COMMAND" != device || -n "$DEVICE_NAME" ]] || die "device requires --device <device-name-or-identifier>"
 for tool in xcodegen xcodebuild xcrun python3 git; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done

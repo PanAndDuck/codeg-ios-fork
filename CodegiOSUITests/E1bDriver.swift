@@ -12,7 +12,7 @@ final class E1bDriver: XCTestCase {
         }
         let config = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: String]
         let base = try XCTUnwrap(config["url"])
-        let bundleID = config["bundleID"] ?? "app.codeg.ios.fork.yourname"
+        let bundleID = config["bundleID"] ?? "app.codeg.ios.fork"
         XCTAssertTrue(bundleID == "app.codeg.ios.fork" || bundleID.hasPrefix("app.codeg.ios.fork."))
         let app = XCUIApplication(bundleIdentifier: bundleID)
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
