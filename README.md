@@ -14,7 +14,7 @@ This fork is based on **xintaofei/codeg-ios**, with modifications by **PanAndDuc
 **服务端兼容 / Server compatibility:** 标准 codeg 支持局域网与基础功能；中继配对需要带内置 relay client、支持 `/__codeg_relay/v1` 协议的 codeg 服务端。
 Stock codeg works for LAN/basic features. Relay pairing requires a codeg server with the built-in relay client implementing the `/__codeg_relay/v1` protocol. Optional features depend on the server's API support.
 
-**构建 / Build:** 使用 Xcode 26、iOS 26 SDK、[XcodeGen](https://github.com/yonyz/XcodeGen) 与 Python 3。签名配置从示例复制并填写自己的 Team ID；已有本地配置时保留它。
+**构建 / Build:** 使用 Xcode 26、iOS 26 SDK、[XcodeGen](https://github.com/yonaskolb/XcodeGen) 与 Python 3。签名配置从示例复制并填写自己的 Team ID；已有本地配置时保留它。
 Use Xcode 26, the iOS 26 SDK, XcodeGen, and Python 3. Copy the signing example if no local override exists, then enter your own team ID for signed device builds. Simulator builds do not require signing.
 
 ```bash
@@ -59,7 +59,7 @@ codeg backend; the app only calls its HTTP + WebSocket API.
 ## Requirements
 
 - Xcode 26 / iOS 26 SDK
-- [XcodeGen](https://github.com/yonyz/XcodeGen) (`brew install xcodegen`) — the
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) — the
   Xcode project is generated from `project.yml`
 
 ## Build & run
