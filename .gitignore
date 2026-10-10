@@ -26,3 +26,10 @@ Config/Signing.local.xcconfig
 Secrets.xcconfig
 CodegiOSTests/LocalTLSFixture.json
 GoogleService-Info.plist
+
+# Local assistant state and test/build artifacts
+.serena/
+.codex/
+.claude/
+*.xcresult
+build-fork/
